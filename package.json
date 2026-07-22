@@ -1,0 +1,24 @@
+{
+  "name": "stroll",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "relay": "wrangler dev --config server/wrangler.jsonc --port 8787",
+    "relay:check": "tsc --noEmit -p server/tsconfig.json",
+    "deploy": "npm run build && wrangler deploy --config server/wrangler.jsonc"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260722.1",
+    "@types/three": "^0.185.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "wrangler": "^4.113.0"
+  }
+}
