@@ -61,6 +61,10 @@ function main(): void {
   }
 
   const touch = isTouchDevice();
+  // 判定はここ 1 か所だけ。CSS もこの結果を見る。
+  // 以前は CSS・overlay・touch がそれぞれ独立に判定していて、
+  // 端末によって「指の説明が出るのに操作ボタンが無い」状態が起きた。
+  document.documentElement.dataset.input = touch ? 'touch' : 'keys';
 
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const renderer = new THREE.WebGLRenderer({
@@ -87,6 +91,9 @@ function main(): void {
   const player = new Player(terrain, spawn.x, spawn.z);
   // 最初に目に入る向きは、太陽に少し背を向けた方が景色が読みやすい。
   player.yaw = Math.atan2(-sky.sunDirection.x, -sky.sunDirection.z) + Math.PI;
+  // 一度だけ反映しておく。これをしないと、歩き出すまでカメラが原点に留まり、
+  // 開始画面の背景がこれから立つ場所と別の景色になる。
+  player.update(0, camera);
 
   const avatars = new Avatars(scene);
   let connection: Connection | null = null;
@@ -133,9 +140,13 @@ function main(): void {
 
   // 以下を関数宣言にしてあるのは、overlay より前に置いても初期化前参照にならないため。
   // アロー関数の const にすると、呼ばれる順番だけが頼りの危うい形になる。
-  const overlay = new Overlay(document.getElementById('ui')!, seed, {
+  const overlay = new Overlay(document.getElementById('ui')!, seed, touch, {
     onStart: () => handleStart(),
     onVolume: (v) => audio?.setVolume(v),
+    // 地形も部屋もシードから作られるので、作り直すより読み込み直す方が確実。
+    onSeed: (next) => {
+      location.search = `?seed=${encodeURIComponent(next)}`;
+    },
   });
 
   function startAudio(): void {

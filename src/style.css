@@ -85,21 +85,6 @@ body {
   color: var(--muted);
 }
 
-.seed {
-  margin: 0 0 20px;
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #8ea0a6;
-}
-
-.seed b {
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: 0.06em;
-  text-transform: none;
-}
-
 button {
   font: inherit;
   cursor: pointer;
@@ -192,7 +177,16 @@ kbd {
   margin-bottom: 18px;
 }
 
-input.name {
+.hint {
+  margin: -6px 0 14px;
+  padding-left: 46px;
+  text-align: left;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: #7d8e94;
+}
+
+.field input[type='text'] {
   flex: 1;
   min-width: 0;
   font: inherit;
@@ -205,12 +199,12 @@ input.name {
   background: rgba(255, 255, 255, 0.06);
 }
 
-input.name:focus {
+.field input[type='text']:focus {
   outline: none;
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-input.name::placeholder {
+.field input[type='text']::placeholder {
   color: rgba(255, 255, 255, 0.3);
 }
 
@@ -330,8 +324,10 @@ input.vol::-webkit-slider-thumb {
   transform: translateX(4px);
 }
 
-/* 指では細かい操作ができないので、当たり判定と字を大きくする。 */
-@media (pointer: coarse) {
+/* 指では細かい操作ができないので、当たり判定と字を大きくする。
+   条件は JS が決めた結果（data-input）を見る。メディアクエリで独立に
+   判定すると、JS 側の判断と食い違って中途半端な画面になる。 */
+:root[data-input='touch'] {
   .card {
     padding: 28px 22px 24px;
   }
@@ -341,7 +337,7 @@ input.vol::-webkit-slider-thumb {
     font-size: 15.5px;
   }
 
-  input.name {
+  .field input[type='text'] {
     padding: 11px 12px;
     font-size: 16px; /* iOS はこれ未満だと入力時に画面を拡大する */
   }

@@ -141,8 +141,4 @@ export class Sky {
     this.sunLight.position.copy(camera.position).addScaledVector(this.sunDirection, 500);
   }
 
-  dispose(): void {
-    this.mesh.geometry.dispose();
-    this.material.dispose();
-  }
 }

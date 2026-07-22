@@ -1,11 +1,15 @@
 export interface OverlayHandlers {
   onStart: () => void;
   onVolume: (value: number) => void;
+  /** 合言葉が変わったとき。世界ごと作り直すので読み込み直す。 */
+  onSeed: (seed: string) => void;
 }
 
 const VOLUME_KEY = 'stroll:volume';
 const NAME_KEY = 'stroll:name';
 const MAX_NAME_LENGTH = 16;
+/** サーバ側の上限と揃えること。 */
+const MAX_SEED_LENGTH = 64;
 
 /**
  * 開始画面と、歩いている間の最小限の表示。
@@ -29,10 +33,12 @@ export class Overlay {
 
   private peers: HTMLElement;
   private peersText = '';
+  private touch: boolean;
 
-  constructor(root: HTMLElement, seed: string, handlers: OverlayHandlers) {
+  constructor(root: HTMLElement, seed: string, touch: boolean, handlers: OverlayHandlers) {
     this.root = root;
     this.seed = seed;
+    this.touch = touch;
     this.handlers = handlers;
 
     const saved = Number(localStorage.getItem(VOLUME_KEY));
@@ -44,7 +50,6 @@ export class Overlay {
         <div class="card">
           <h1>stroll</h1>
           <p class="lead">歩くだけの世界です。目的も、期限もありません。</p>
-          <p class="seed">seed <b>${escapeHtml(seed)}</b></p>
           <button class="start" disabled>地形を生成しています…</button>
           <ul class="keys">
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 歩く</li>
@@ -64,6 +69,12 @@ export class Overlay {
             <input class="name" type="text" maxlength="${MAX_NAME_LENGTH}"
               placeholder="友達に表示される名前" value="${escapeHtml(this.name)}" />
           </label>
+          <label class="field">
+            <span>合言葉</span>
+            <input class="seed-input" type="text" maxlength="${MAX_SEED_LENGTH}"
+              placeholder="好きな言葉" value="${escapeHtml(seed)}" />
+          </label>
+          <p class="hint">同じ合言葉なら同じ地形。友達と一緒に歩けます。</p>
           <label class="field">
             <span>音量</span>
             <input class="vol" type="range" min="0" max="1" step="0.01" value="${this.volume}" />
@@ -108,6 +119,24 @@ export class Overlay {
         this.handlers.onStart();
       }
     });
+
+    // 合言葉を変えると地形も部屋も別物になるので、確定したときだけ反映する。
+    // 入力の途中で world を作り直すと、一文字打つたびに世界が変わってしまう。
+    const seedInput = this.root.querySelector('.seed-input') as HTMLInputElement;
+    const applySeed = () => {
+      const next = seedInput.value.trim().slice(0, MAX_SEED_LENGTH);
+      if (!next || next === this.seed) {
+        seedInput.value = this.seed;
+        return;
+      }
+      this.handlers.onSeed(next);
+    };
+    seedInput.addEventListener('change', applySeed);
+    seedInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      applySeed();
+    });
   }
 
   /**
@@ -125,8 +154,7 @@ export class Overlay {
   setReady(): void {
     if (!this.startBtn.disabled) return;
     this.startBtn.disabled = false;
-    const touch = matchMedia('(pointer: coarse)').matches;
-    this.startBtn.textContent = touch
+    this.startBtn.textContent = this.touch
       ? 'タップして歩きはじめる'
       : 'クリックして歩きはじめる';
   }

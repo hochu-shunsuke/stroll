@@ -213,12 +213,4 @@ export class ChunkManager {
       }
     }
   }
-
-  dispose(): void {
-    for (const w of this.workers) w.terminate();
-    for (const chunk of this.chunks.values()) this.disposeChunk(chunk);
-    this.chunks.clear();
-    this.material.dispose();
-  }
-
 }

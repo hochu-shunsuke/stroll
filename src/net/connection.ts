@@ -40,7 +40,6 @@ export class Connection {
   private ws: WebSocket | null = null;
   private lastSentAt = 0;
   private lastSent: PlayerState | null = null;
-  private disposed = false;
   private everOpened = false;
   private coldRetries = 0;
   private retryTimer = 0;
@@ -72,7 +71,6 @@ export class Connection {
   }
 
   private connect(): void {
-    if (this.disposed) return;
     this.handlers.onStatus('connecting');
 
     const url = new URL(this.url);
@@ -112,8 +110,6 @@ export class Connection {
   }
 
   private scheduleReconnect(): void {
-    if (this.disposed) return;
-
     if (!this.everOpened) {
       this.coldRetries++;
       if (this.coldRetries > MAX_COLD_RETRIES) {
@@ -145,7 +141,7 @@ export class Connection {
     }
 
     if (msg.t === 'join') {
-      this.addPeer({ id: msg.id, name: msg.name, state: msg.s });
+      this.addPeer({ id: msg.id, name: msg.name, s: msg.s });
       return;
     }
 
@@ -189,13 +185,6 @@ export class Connection {
     this.lastSent = { ...state };
     this.lastSentAt = now;
     this.ws.send(JSON.stringify({ t: 'state', s: state }));
-  }
-
-  dispose(): void {
-    this.disposed = true;
-    clearTimeout(this.retryTimer);
-    this.ws?.close();
-    this.ws = null;
   }
 }
 

@@ -4,6 +4,8 @@
 
 URL を共有すると、同じ地形の同じ場所を友達と一緒に歩ける。
 
+公開版: https://stroll-relay.hochu.workers.dev
+
 ## 動かす
 
 ```bash

@@ -116,8 +116,4 @@ export class Water {
     this.mesh.position.z = camera.position.z;
   }
 
-  dispose(): void {
-    this.mesh.geometry.dispose();
-    this.material.dispose();
-  }
 }

@@ -127,9 +127,6 @@ export class Avatars {
     this.scene = scene;
   }
 
-  get count(): number {
-    return this.avatars.size;
-  }
 
   add(id: string, name: string, state: PlayerState | null): void {
     if (this.avatars.has(id)) return;
@@ -196,7 +193,4 @@ export class Avatars {
     }
   }
 
-  clear(): void {
-    for (const id of [...this.avatars.keys()]) this.remove(id);
-  }
 }

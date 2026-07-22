@@ -21,12 +21,18 @@ export interface TouchControlsOptions {
 export interface TouchControls {
   /** 歩いている間だけ出す。開始画面の上に重ねない。 */
   setActive(active: boolean): void;
-  dispose(): void;
 }
 
-/** タッチ端末かどうか。細かい判定はせず、指で操作する画面かだけを見る。 */
+/**
+ * 指で操作する画面かどうか。
+ *
+ * (pointer: coarse) だけでは、キーボードを繋いだタブレットのように
+ * 「主たるポインタは細いが指でも触れる」端末を取りこぼす。
+ * その状態だと操作ボタンが一切出ず、何もできない画面になるので、
+ * 触れる端末なら出す方に倒している。キーボードは常に併用できる。
+ */
 export function isTouchDevice(): boolean {
-  return matchMedia('(pointer: coarse)').matches;
+  return matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 }
 
 /**
@@ -152,13 +158,6 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
     setActive(active: boolean) {
       layer.classList.toggle('on', active);
       if (!active) releaseStick();
-    },
-    dispose() {
-      surface.removeEventListener('pointerdown', onPointerDown);
-      surface.removeEventListener('pointermove', onPointerMove);
-      surface.removeEventListener('pointerup', onPointerUp);
-      surface.removeEventListener('pointercancel', onPointerUp);
-      layer.remove();
     },
   };
 }
