@@ -4,6 +4,10 @@ dist/
 # wrangler のローカル状態（Durable Objects の中身もここに入る）
 .wrangler/
 
+# 方向性や売り方の考えを書き留める場所。外に出さない。
+# CLAUDE.md（公開）はコードの触り方だけを書き、こちらを読むよう指しているだけ。
+.claude/
+
 # 開発用の中継サーバの向き先。本番は同じオリジンから自動で決まるので不要。
 .env.local
 .env.*.local
