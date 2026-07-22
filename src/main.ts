@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
 import { AudioEngine } from './audio/engine';
 import { Footsteps } from './audio/footsteps';
-import { count } from './net/beacon';
 import { Connection, type NetStatus, type PlayerState } from './net/connection';
 import { Player } from './player/controller';
 import { Avatars } from './render/avatars';
@@ -54,16 +53,12 @@ function findSpawn(terrain: Terrain): { x: number; z: number } {
 
 function main(): void {
   const params = new URLSearchParams(location.search);
-  // 誘われて来たのか自分で来たのかは、URL を書き換える前に見ておく。
-  const invited = params.get('seed') !== null;
   const seed = params.get('seed') || randomSeed();
   // 種を URL に残す。リロードしても、共有しても同じ世界になる。
   if (params.get('seed') !== seed) {
     params.set('seed', seed);
     history.replaceState(null, '', `${location.pathname}?${params}`);
   }
-
-  count(invited ? 'load-invited' : 'load-direct');
 
   const touch = isTouchDevice();
   // 判定はここ 1 か所だけ。CSS もこの結果を見る。
@@ -128,7 +123,6 @@ function main(): void {
   // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
   // 状態そのものを持ち、入力方式に依存しない形にしている。
   let playing = false;
-  let started = false;
   let touchControls: TouchControls | null = null;
 
   const PAUSE_HINT = touch
@@ -202,12 +196,6 @@ function main(): void {
   }
 
   function handleStart(): void {
-    // 開いただけの人と、実際に歩き出した人を分けて数える。
-    // 招待が機能しているかは、この 2 つの差にしか現れない。
-    if (!started) {
-      started = true;
-      count(invited ? 'start-invited' : 'start-direct');
-    }
     startAudio();
     connect();
 
