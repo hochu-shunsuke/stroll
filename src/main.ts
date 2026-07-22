@@ -10,17 +10,10 @@ import { Water } from './render/water';
 import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
+import { normalizeSeed, randomSeed } from '../shared/seed';
 import { createTouchControls, isTouchDevice, type TouchControls } from './ui/touch';
 
 const LOOK_SENSITIVITY = 0.0022;
-
-/** 読み上げやすい種を作る。URL に載せて友達に渡すため。 */
-function randomSeed(): string {
-  const a = ['aki', 'sora', 'mori', 'nagi', 'hina', 'yuki', 'kaze', 'shio', 'tsuki', 'hono'];
-  const b = ['mine', 'saki', 'kawa', 'hara', 'oka', 'tani', 'shima', 'no', 'mizu', 'ha'];
-  const pick = <T>(arr: T[]) => arr[(Math.random() * arr.length) | 0];
-  return `${pick(a)}-${pick(b)}-${Math.floor(Math.random() * 900 + 100)}`;
-}
 
 /**
  * 歩き出すのに気持ちのいい場所を探す。
@@ -52,13 +45,17 @@ function findSpawn(terrain: Terrain): { x: number; z: number } {
 }
 
 function main(): void {
-  const params = new URLSearchParams(location.search);
-  const seed = params.get('seed') || randomSeed();
-  // 種を URL に残す。リロードしても、共有しても同じ世界になる。
-  if (params.get('seed') !== seed) {
-    params.set('seed', seed);
-    history.replaceState(null, '', `${location.pathname}?${params}`);
+  // 合言葉はパスに置く。/abc123 のように、余計な記号を挟まない形にしている。
+  // 決まりに合わないものが来たら黙って新しい世界を作る（エラー画面は出さない）。
+  const requested = location.pathname.slice(1);
+  const fromPath = normalizeSeed(requested);
+  const seed = fromPath ?? randomSeed();
+  if (fromPath !== seed) {
+    history.replaceState(null, '', `/${seed}`);
   }
+  // 読めない合言葉で来た人に黙って別の世界を渡すと、
+  // 着いたつもりで誰もいない場所を歩くことになる。必ず伝える。
+  const badSeed = requested.length > 0 && fromPath === null;
 
   const touch = isTouchDevice();
   // 判定はここ 1 か所だけ。CSS もこの結果を見る。
@@ -123,6 +120,7 @@ function main(): void {
   // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
   // 状態そのものを持ち、入力方式に依存しない形にしている。
   let playing = false;
+  let badSeedShown = false;
   let touchControls: TouchControls | null = null;
 
   const PAUSE_HINT = touch
@@ -143,9 +141,9 @@ function main(): void {
   const overlay = new Overlay(document.getElementById('ui')!, seed, touch, {
     onStart: () => handleStart(),
     onVolume: (v) => audio?.setVolume(v),
-    // 地形も部屋もシードから作られるので、作り直すより読み込み直す方が確実。
+    // 地形も部屋も合言葉から作られるので、作り直すより読み込み直す方が確実。
     onSeed: (next) => {
-      location.search = `?seed=${encodeURIComponent(next)}`;
+      location.href = `/${next}`;
     },
   });
 
@@ -272,7 +270,13 @@ function main(): void {
     }
 
     chunks.update(player.position.x, player.position.z);
-    if (chunks.ready) overlay.setReady();
+    if (chunks.ready) {
+      overlay.setReady();
+      if (badSeed && !badSeedShown) {
+        badSeedShown = true;
+        overlay.flash('その合言葉は読めませんでした。新しい世界を作りました。');
+      }
+    }
 
     ambience?.update(dt, {
       speed: player.speed,

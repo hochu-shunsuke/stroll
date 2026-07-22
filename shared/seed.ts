@@ -1,0 +1,61 @@
+/**
+ * 合言葉の決まり。クライアントとサーバの両方がこのファイルを使う。
+ *
+ * 同じ検証を 2 か所に書くと必ずズレる。片方だけ緩いと、
+ * 弾いたつもりのものが通ってしまう。だからここ 1 つに集約している。
+ *
+ * 英数字 6 文字に固定しているのは 3 つの理由から:
+ *   - URL のパスにそのまま置ける（`/` も空白も符号化も出てこない）
+ *   - 口で伝えられる長さで、書き写せる
+ *   - 長さが決まっていれば「途中まで入力した状態」を判定しなくて済む
+ */
+
+/** 合言葉に使える文字。小文字と数字だけ。 */
+const SEED_PATTERN = /^[a-z0-9]{6}$/;
+
+export const SEED_LENGTH = 6;
+
+/**
+ * 自動生成に使う文字。読み間違えやすい 0 O 1 l を外してある。
+ * 口頭やメモで渡されても取り違えないように。
+ * （利用者が自分で決める場合はこの制限を掛けない。`sakura` などを許すため）
+ */
+const GENERATOR_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
+
+export function isSeed(value: unknown): value is string {
+  return typeof value === 'string' && SEED_PATTERN.test(value);
+}
+
+/**
+ * 入力を合言葉として解釈する。大文字と前後の空白は直して受け入れる。
+ * 決まりに合わないものは null を返す。呼び出し側で必ず分岐すること。
+ */
+export function normalizeSeed(input: unknown): string | null {
+  if (typeof input !== 'string') return null;
+  const value = input.trim().toLowerCase();
+  return isSeed(value) ? value : null;
+}
+
+/** 入力途中の文字を、使える文字だけに削る。入力欄で 1 文字ごとに使う。 */
+export function filterSeedInput(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, SEED_LENGTH);
+}
+
+/**
+ * 新しい合言葉を作る。
+ *
+ * 32 文字から 6 文字なので約 10 億通り。ここを狭めると、
+ * 無関係な人同士が同じ世界に居合わせてしまう（1 人で歩きたい人には事故になる）。
+ */
+export function randomSeed(): string {
+  const bytes = new Uint8Array(SEED_LENGTH);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const byte of bytes) {
+    out += GENERATOR_ALPHABET[byte % GENERATOR_ALPHABET.length];
+  }
+  return out;
+}

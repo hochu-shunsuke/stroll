@@ -1,3 +1,5 @@
+import { SEED_LENGTH, filterSeedInput, normalizeSeed } from '../../shared/seed';
+
 export interface OverlayHandlers {
   onStart: () => void;
   onVolume: (value: number) => void;
@@ -8,8 +10,6 @@ export interface OverlayHandlers {
 const VOLUME_KEY = 'stroll:volume';
 const NAME_KEY = 'stroll:name';
 const MAX_NAME_LENGTH = 16;
-/** サーバ側の上限と揃えること。 */
-const MAX_SEED_LENGTH = 64;
 
 /**
  * 開始画面と、歩いている間の最小限の表示。
@@ -34,6 +34,7 @@ export class Overlay {
   private peers: HTMLElement;
   private peersText = '';
   private touch: boolean;
+  private seedHint: HTMLElement;
 
   constructor(root: HTMLElement, seed: string, touch: boolean, handlers: OverlayHandlers) {
     this.root = root;
@@ -67,8 +68,9 @@ export class Overlay {
           </label>
           <label class="field">
             <span>合言葉</span>
-            <input class="seed-input" type="text" maxlength="${MAX_SEED_LENGTH}"
-              placeholder="好きな言葉" value="${escapeHtml(seed)}" />
+            <input class="seed-input" type="text" maxlength="${SEED_LENGTH}"
+              inputmode="text" autocapitalize="off" autocorrect="off" spellcheck="false"
+              placeholder="英数字${SEED_LENGTH}文字" value="${escapeHtml(seed)}" />
           </label>
           <p class="hint">同じ合言葉なら同じ地形。友達と一緒に歩けます。</p>
           <label class="field">
@@ -92,6 +94,7 @@ export class Overlay {
     this.toast = this.root.querySelector('.toast')!;
 
     this.peers = this.root.querySelector('.hud-peers')!;
+    this.seedHint = this.root.querySelector('.hint')!;
 
     this.startBtn.addEventListener('click', () => this.handlers.onStart());
     this.root.querySelector('.share')!.addEventListener('click', () => this.copyUrl());
@@ -117,14 +120,24 @@ export class Overlay {
     });
 
     // 合言葉を変えると地形も部屋も別物になるので、確定したときだけ反映する。
-    // 入力の途中で world を作り直すと、一文字打つたびに世界が変わってしまう。
+    // 入力の途中で作り直すと、一文字打つたびに世界が変わってしまう。
     const seedInput = this.root.querySelector('.seed-input') as HTMLInputElement;
+
+    // 使えない文字は打った端から落とす。あとで怒るより、入らない方が親切。
+    seedInput.addEventListener('input', () => {
+      const cleaned = filterSeedInput(seedInput.value);
+      if (cleaned !== seedInput.value) seedInput.value = cleaned;
+      this.setSeedError(null);
+    });
+
     const applySeed = () => {
-      const next = seedInput.value.trim().slice(0, MAX_SEED_LENGTH);
-      if (!next || next === this.seed) {
-        seedInput.value = this.seed;
+      const next = normalizeSeed(seedInput.value);
+      if (!next) {
+        this.setSeedError(`合言葉は英数字${SEED_LENGTH}文字です`);
         return;
       }
+      this.setSeedError(null);
+      if (next === this.seed) return;
       this.handlers.onSeed(next);
     };
     seedInput.addEventListener('change', applySeed);
@@ -133,6 +146,12 @@ export class Overlay {
       e.preventDefault();
       applySeed();
     });
+  }
+
+  /** 合言葉の入力が決まりに合っていないことを、その場で伝える。 */
+  private setSeedError(message: string | null): void {
+    this.seedHint.textContent = message ?? '同じ合言葉なら同じ地形。友達と一緒に歩けます。';
+    this.seedHint.classList.toggle('bad', message !== null);
   }
 
   /**

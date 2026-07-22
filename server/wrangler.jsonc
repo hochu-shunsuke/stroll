@@ -6,7 +6,8 @@
   "observability": { "enabled": true },
   // ビルドしたクライアントを同じ Worker から配る。
   // 配信と中継が同じオリジンになるので、共有する URL が 1 本で済む。
-  "assets": { "directory": "../dist" },
+  // binding を付けると Worker から取り出せる。合言葉のパスに index.html を返すため。
+  "assets": { "directory": "../dist", "binding": "ASSETS" },
   "durable_objects": {
     "bindings": [
 { "name": "ROOMS", "class_name": "Room" }]

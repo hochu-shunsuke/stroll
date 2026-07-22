@@ -402,3 +402,8 @@ input.vol::-webkit-slider-thumb {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* 合言葉の決まりに合っていないときだけ、補足文を注意書きに変える。 */
+.hint.bad {
+  color: #e0a08c;
+}

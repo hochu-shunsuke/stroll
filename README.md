@@ -2,7 +2,12 @@
 
 自動生成された自然を歩くだけの世界。目的も、期限もない。
 
-URL を共有すると、同じ地形の同じ場所を友達と一緒に歩ける。
+URL を共有すると、同じ地形を友達と一緒に歩ける。
+
+```
+https://stroll-relay.hochu.workers.dev/mikaze
+                                       ^^^^^^ 合言葉。英数字 6 文字
+```
 
 公開版: https://stroll-relay.hochu.workers.dev
 
