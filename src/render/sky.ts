@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RENDER_ORDER } from './order';
 
 const vert = /* glsl */ `
   varying vec3 vDir;
@@ -114,7 +115,7 @@ export class Sky {
     this.mesh.scale.setScalar(6000);
     this.mesh.frustumCulled = false;
     // 最初に描いて、あとから地形で上書きさせる。
-    this.mesh.renderOrder = -1000;
+    this.mesh.renderOrder = RENDER_ORDER.sky;
     scene.add(this.mesh);
 
     this.sunLight = new THREE.DirectionalLight(col(preset.sun), preset.sunIntensity);

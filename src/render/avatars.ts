@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { hash2 } from '../core/rng';
 import type { PlayerState } from '../net/connection';
 import { EYE_HEIGHT } from '../player/controller';
+import { RENDER_ORDER } from './order';
 
 /** 名前が読めなくなる距離。これより遠い相手のラベルは消す。 */
 const LABEL_RANGE = 70;
@@ -103,6 +104,10 @@ function makeLabel(name: string): THREE.Sprite {
       depthWrite: false,
     }),
   );
+  // 水より後に描く。水はカメラ追従の板なので、放っておくと
+  // 常に名前の上に被さり、水辺でだけ文字が読めなくなる。
+  sprite.renderOrder = RENDER_ORDER.label;
+
   const scale = 0.55;
   sprite.scale.set((width / height) * scale, scale, 1);
   sprite.position.y = 2.05;

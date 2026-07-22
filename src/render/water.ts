@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
+import { RENDER_ORDER } from './order';
 
 const vert = /* glsl */ `
   varying vec3 vWorld;
@@ -104,7 +105,7 @@ export class Water {
     this.mesh = new THREE.Mesh(geo, this.material);
     this.mesh.position.y = SEA_LEVEL;
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 10;
+    this.mesh.renderOrder = RENDER_ORDER.water;
     scene.add(this.mesh);
   }
 
