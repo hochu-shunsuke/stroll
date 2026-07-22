@@ -6,8 +6,8 @@ const STICK_RADIUS = 58;
 const DEAD_ZONE = 7;
 /** この割合以上倒したら走る。 */
 const SPRINT_AT = 0.85;
-/** 指での視点移動はマウスより鈍くする。 */
-const LOOK_SCALE = 0.6;
+/** 指での視点移動の倍率。画面上を指が動く距離は短いので、マウスより速くする。 */
+const LOOK_SCALE = 1.2;
 
 export interface TouchControlsOptions {
   root: HTMLElement;
