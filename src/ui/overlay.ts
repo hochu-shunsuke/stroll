@@ -60,10 +60,6 @@ export class Overlay {
             <li><kbd>Esc</kbd> 一時停止</li>
           </ul>
           <p class="note note-keys">飛行中は見ている方へ進みます。<kbd>Space</kbd> で上昇、<kbd>Shift</kbd> で下降。</p>
-          <p class="note note-touch">
-            画面の左半分をなぞって歩き、右半分をなぞって見回します。<br>
-            奥まで倒すと走ります。<b>跳</b>を二度続けて押すと飛べます。
-          </p>
           <label class="field">
             <span>名前</span>
             <input class="name" type="text" maxlength="${MAX_NAME_LENGTH}"

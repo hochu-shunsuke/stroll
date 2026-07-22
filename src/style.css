@@ -148,11 +148,6 @@ kbd {
   color: #8ea0a6;
 }
 
-/* 操作方法は入力方式で切り替える。表示は CSS 側だけで決める。 */
-.note-touch {
-  display: none;
-}
-
 .note kbd {
   font-size: 9.5px;
 }
@@ -347,14 +342,11 @@ input.vol::-webkit-slider-thumb {
     height: 22px;
   }
 
-  /* キーボードの説明はタッチ端末では邪魔にしかならない。 */
+  /* 操作の説明はタッチ端末では出さない。触れば分かるうえ、
+     狭い画面では文章が場所を食って他の要素と重なる。 */
   .keys,
   .note-keys {
     display: none;
-  }
-
-  .note-touch {
-    display: block;
   }
 }
 
