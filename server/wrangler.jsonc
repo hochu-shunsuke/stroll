@@ -1,14 +1,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stroll-relay",
-  "main": "room.ts",
+  "main": "index.ts",
   "compatibility_date": "2026-07-01",
   "observability": { "enabled": true },
   // ビルドしたクライアントを同じ Worker から配る。
   // 配信と中継が同じオリジンになるので、共有する URL が 1 本で済む。
   "assets": { "directory": "../dist" },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "STATS", "class_name": "Stats" }
+    ]
   },
   "migrations": [
     {
@@ -16,6 +19,7 @@
       // new_classes（旧KV方式）にすると有料プランが要求されるので触らないこと。
       "tag": "v1",
       "new_sqlite_classes": ["Room"]
-    }
+    },
+    { "tag": "v2", "new_sqlite_classes": ["Stats"] }
   ]
 }

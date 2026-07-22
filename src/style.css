@@ -62,6 +62,8 @@ body {
 }
 
 .card {
+  /* ラベルの幅。補足文の字下げもこれに揃える。 */
+  --label-w: 48px;
   width: min(420px, 100%);
   text-align: center;
   background: rgba(16, 26, 32, 0.55);
@@ -94,6 +96,9 @@ button {
 
 .start {
   width: 100%;
+  /* 下の余白はこの要素が持つ。隣の説明文の margin に頼ると、
+     説明を隠した端末でボタンが次の欄にくっつく。 */
+  margin-bottom: 22px;
   padding: 13px 18px;
   font-size: 14.5px;
   color: #10201f;
@@ -114,7 +119,7 @@ button {
 
 .keys {
   list-style: none;
-  margin: 22px 0 20px;
+  margin: 0 0 20px;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
@@ -163,9 +168,10 @@ kbd {
 }
 
 .field > span {
-  width: 34px;
+  width: var(--label-w);
   text-align: left;
   flex: none;
+  white-space: nowrap;
 }
 
 .field:last-of-type {
@@ -174,7 +180,7 @@ kbd {
 
 .hint {
   margin: -6px 0 14px;
-  padding-left: 46px;
+  padding-left: calc(var(--label-w) + 12px);
   text-align: left;
   font-size: 10.5px;
   line-height: 1.6;

@@ -25,10 +25,6 @@ interface Attachment {
   state: PlayerState | null;
 }
 
-export interface Env {
-  ROOMS: DurableObjectNamespace;
-}
-
 /** 表示名は他人の画面に出るので、長さと文字種を絞る。 */
 function cleanName(raw: unknown): string {
   if (typeof raw !== 'string') return '';
@@ -148,22 +144,3 @@ export class Room {
     }
   }
 }
-
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname !== '/ws') {
-      return new Response('stroll relay', { status: 200 });
-    }
-
-    const seed = url.searchParams.get('seed');
-    if (!seed || seed.length > 64) {
-      return new Response('missing or invalid seed', { status: 400 });
-    }
-
-    // シードがそのまま部屋の名前になる。同じ URL を開けば同じ部屋に入る。
-    const id = env.ROOMS.idFromName(seed);
-    return env.ROOMS.get(id).fetch(request);
-  },
-};
