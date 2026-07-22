@@ -10,7 +10,7 @@ import { Water } from './render/water';
 import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
-import { createTouchControls, isTouchDevice } from './ui/touch';
+import { createTouchControls, isTouchDevice, type TouchControls } from './ui/touch';
 
 const LOOK_SENSITIVITY = 0.0022;
 
@@ -106,14 +106,13 @@ function main(): void {
     player.onLand = (intensity) => footsteps!.land(intensity);
   };
 
-  // 本番はページと同じオリジンが中継も兼ねる（Worker が静的ファイルごと配っている）。
-  // 開発中は vite と wrangler がポート違いなので .env.local の設定を使う。
-  // どちらも無ければ通信しない。1 人で歩く分には何も変わらない。
-  const relayUrl =
-    (import.meta.env.VITE_RELAY_URL as string | undefined) ||
-    (import.meta.env.PROD
-      ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-      : undefined);
+  // 本番はページを配っている Worker がそのまま中継も兼ねるので、行き先は同一オリジンで確定。
+  // ここで環境変数を見ないのは意図的。一度 .env.local の開発用アドレスが本番に焼き込まれ、
+  // 別の端末から誰にも会えなくなったことがある。設定で壊せる余地を残さない。
+  // 開発中だけは vite と wrangler がポート違いなので設定を使う。無ければ通信しない。
+  const relayUrl = import.meta.env.PROD
+    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+    : (import.meta.env.VITE_RELAY_URL as string | undefined);
   const avatars = new Avatars(scene);
   let connection: Connection | null = null;
   let netMessage: string | null = null;
@@ -153,16 +152,20 @@ function main(): void {
   // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
   // 状態そのものを持ち、入力方式に依存しない形にしている。
   let playing = false;
+  let touchControls: TouchControls | null = null;
 
   const startPlaying = () => {
     playing = true;
     overlay.hide();
+    touchControls?.setActive(true);
   };
 
   const stopPlaying = (message: string) => {
     playing = false;
     // 押しっぱなし・倒しっぱなしの判定が残らないように全部戻す。
     player.clearKeys();
+    // 隠さないと、開始画面の上にボタンが重なって表示されてしまう。
+    touchControls?.setActive(false);
     overlay.show(message);
   };
 
@@ -184,7 +187,7 @@ function main(): void {
   });
 
   if (touch) {
-    createTouchControls({
+    touchControls = createTouchControls({
       root: document.getElementById('ui')!,
       surface: canvas,
       player,

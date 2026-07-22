@@ -18,6 +18,12 @@ export interface TouchControlsOptions {
   onPause: () => void;
 }
 
+export interface TouchControls {
+  /** 歩いている間だけ出す。開始画面の上に重ねない。 */
+  setActive(active: boolean): void;
+  dispose(): void;
+}
+
 /** タッチ端末かどうか。細かい判定はせず、指で操作する画面かだけを見る。 */
 export function isTouchDevice(): boolean {
   return matchMedia('(pointer: coarse)').matches;
@@ -30,15 +36,15 @@ export function isTouchDevice(): boolean {
  * 決まった位置に置くと持ち方によって届かないので、触れた場所を中心にしている。
  * 右半分はどこを触っても視点操作。
  */
-export function createTouchControls(opts: TouchControlsOptions): () => void {
+export function createTouchControls(opts: TouchControlsOptions): TouchControls {
   const { root, surface, player, lookSensitivity, isPlaying, onPause } = opts;
 
   const layer = document.createElement('div');
   layer.className = 'touch';
   layer.innerHTML = `
     <div class="stick"><span class="stick-knob"></span></div>
-    <button class="touch-btn touch-jump" aria-label="跳ぶ">跳</button>
-    <button class="touch-btn touch-pause" aria-label="一時停止">Ⅱ</button>
+    <button class="touch-btn touch-jump" aria-label="跳ぶ"></button>
+    <button class="touch-btn touch-pause" aria-label="一時停止"></button>
   `;
   root.appendChild(layer);
 
@@ -142,11 +148,17 @@ export function createTouchControls(opts: TouchControlsOptions): () => void {
   jump.addEventListener('pointercancel', onJumpUp);
   pause.addEventListener('click', onPause);
 
-  return () => {
-    surface.removeEventListener('pointerdown', onPointerDown);
-    surface.removeEventListener('pointermove', onPointerMove);
-    surface.removeEventListener('pointerup', onPointerUp);
-    surface.removeEventListener('pointercancel', onPointerUp);
-    layer.remove();
+  return {
+    setActive(active: boolean) {
+      layer.classList.toggle('on', active);
+      if (!active) releaseStick();
+    },
+    dispose() {
+      surface.removeEventListener('pointerdown', onPointerDown);
+      surface.removeEventListener('pointermove', onPointerMove);
+      surface.removeEventListener('pointerup', onPointerUp);
+      surface.removeEventListener('pointercancel', onPointerUp);
+      layer.remove();
+    },
   };
 }

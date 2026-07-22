@@ -43,8 +43,13 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
-  place-items: center;
-  padding: 24px;
+  justify-items: center;
+  justify-content: center;
+  /* 入りきらないときは上を切らずにスクロールさせる。
+     safe を付けないと、はみ出したときに頭が画面外へ追い出される。 */
+  align-content: safe center;
+  overflow-y: auto;
+  padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
   background: radial-gradient(120% 100% at 50% 40%, rgba(18, 30, 36, 0.45), rgba(12, 20, 26, 0.82));
   backdrop-filter: blur(3px);
   pointer-events: auto;
@@ -241,6 +246,12 @@ input.vol::-webkit-slider-thumb {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* 歩いている間だけ出す。開始画面の上に重ねない。 */
+  display: none;
+}
+
+.touch.on {
+  display: block;
 }
 
 /* スティックは触れた場所に出す。持ち方で届かない位置に固定しないため。 */
@@ -291,7 +302,6 @@ input.vol::-webkit-slider-thumb {
   bottom: max(38px, env(safe-area-inset-bottom));
   width: 76px;
   height: 76px;
-  font-size: 17px;
 }
 
 .touch-pause {
@@ -299,8 +309,25 @@ input.vol::-webkit-slider-thumb {
   top: max(16px, env(safe-area-inset-top));
   width: 42px;
   height: 42px;
-  font-size: 13px;
-  letter-spacing: 0.1em;
+}
+
+/* 一時停止だけは記号を描く。無地だと何のボタンか分からないので。 */
+.touch-pause::before,
+.touch-pause::after {
+  content: '';
+  width: 2.5px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--ink);
+  grid-area: 1 / 1;
+}
+
+.touch-pause::before {
+  transform: translateX(-4px);
+}
+
+.touch-pause::after {
+  transform: translateX(4px);
 }
 
 /* 指では細かい操作ができないので、当たり判定と字を大きくする。 */
