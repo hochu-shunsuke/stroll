@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
 import { AudioEngine } from './audio/engine';
 import { Footsteps } from './audio/footsteps';
-import { Connection, type NetStatus } from './net/connection';
+import { Connection, type NetStatus, type PlayerState } from './net/connection';
 import { Player } from './player/controller';
 import { Avatars } from './render/avatars';
 import { MORNING, Sky } from './render/sky';
@@ -88,31 +88,6 @@ function main(): void {
   // 最初に目に入る向きは、太陽に少し背を向けた方が景色が読みやすい。
   player.yaw = Math.atan2(-sky.sunDirection.x, -sky.sunDirection.z) + Math.PI;
 
-  // 音は最初のクリックまで作れない（ブラウザの自動再生制限）。
-  let audio: AudioEngine | null = null;
-  let ambience: Ambience | null = null;
-  let footsteps: Footsteps | null = null;
-
-  const startAudio = () => {
-    if (audio) {
-      audio.resume();
-      return;
-    }
-    audio = new AudioEngine();
-    ambience = new Ambience(audio);
-    footsteps = new Footsteps(audio);
-    audio.setVolume(overlay.volume);
-    player.onFootstep = (intensity) => footsteps!.step(intensity);
-    player.onLand = (intensity) => footsteps!.land(intensity);
-  };
-
-  // 本番はページを配っている Worker がそのまま中継も兼ねるので、行き先は同一オリジンで確定。
-  // ここで環境変数を見ないのは意図的。一度 .env.local の開発用アドレスが本番に焼き込まれ、
-  // 別の端末から誰にも会えなくなったことがある。設定で壊せる余地を残さない。
-  // 開発中だけは vite と wrangler がポート違いなので設定を使う。無ければ通信しない。
-  const relayUrl = import.meta.env.PROD
-    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-    : (import.meta.env.VITE_RELAY_URL as string | undefined);
   const avatars = new Avatars(scene);
   let connection: Connection | null = null;
   let netMessage: string | null = null;
@@ -124,19 +99,65 @@ function main(): void {
     unreachable: '1人で歩いています',
   };
 
-  const connect = () => {
+  // 本番はページを配っている Worker がそのまま中継も兼ねるので、行き先は同一オリジンで確定。
+  // ここで環境変数を見ないのは意図的。一度 .env.local の開発用アドレスが本番に焼き込まれ、
+  // 別の端末から誰にも会えなくなったことがある。設定で壊せる余地を残さない。
+  // 開発中だけは vite と wrangler がポート違いなので設定を使う。無ければ通信しない。
+  const relayUrl = import.meta.env.PROD
+    ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+    : (import.meta.env.VITE_RELAY_URL as string | undefined);
+
+  // 音は最初の操作まで作れない（ブラウザの自動再生制限）。
+  let audio: AudioEngine | null = null;
+  let ambience: Ambience | null = null;
+  let footsteps: Footsteps | null = null;
+
+  // 歩いている最中かどうか。
+  // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
+  // 状態そのものを持ち、入力方式に依存しない形にしている。
+  let playing = false;
+  let touchControls: TouchControls | null = null;
+
+  const PAUSE_HINT = touch
+    ? '休憩中。タップすると続きから歩けます。'
+    : '休憩中。クリックすると続きから歩けます。';
+
+  /** 初回の挨拶にも毎回の送信にも同じものを使う。片方だけ変わると位置がずれる。 */
+  const playerState = (): PlayerState => ({
+    x: player.position.x,
+    y: player.position.y,
+    z: player.position.z,
+    yaw: player.yaw,
+    flying: player.flying,
+  });
+
+  // 以下を関数宣言にしてあるのは、overlay より前に置いても初期化前参照にならないため。
+  // アロー関数の const にすると、呼ばれる順番だけが頼りの危うい形になる。
+  const overlay = new Overlay(document.getElementById('ui')!, seed, {
+    onStart: () => handleStart(),
+    onVolume: (v) => audio?.setVolume(v),
+  });
+
+  function startAudio(): void {
+    if (audio) {
+      audio.resume();
+      return;
+    }
+    audio = new AudioEngine();
+    ambience = new Ambience(audio);
+    footsteps = new Footsteps(audio);
+    audio.setVolume(overlay.volume);
+    player.onFootstep = (intensity) => footsteps!.step(intensity);
+    player.onLand = (intensity) => footsteps!.land(intensity);
+  }
+
+  function connect(): void {
     if (connection || !relayUrl) return;
     connection = new Connection({
       url: relayUrl,
       seed,
       name: overlay.name || '名無し',
-      getState: () => ({
-        x: player.position.x,
-        y: player.position.y,
-        z: player.position.z,
-        yaw: player.yaw,
-        flying: player.flying,
-      }),
+      getState: playerState,
       handlers: {
         onJoin: (peer) => avatars.add(peer.id, peer.name, peer.state),
         onLeave: (id) => avatars.remove(id),
@@ -146,45 +167,36 @@ function main(): void {
         },
       },
     });
-  };
+  }
 
-  // 歩いている最中かどうか。
-  // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
-  // 状態そのものを持ち、入力方式に依存しない形にしている。
-  let playing = false;
-  let touchControls: TouchControls | null = null;
-
-  const startPlaying = () => {
+  function startPlaying(): void {
     playing = true;
     overlay.hide();
     touchControls?.setActive(true);
-  };
+  }
 
-  const stopPlaying = (message: string) => {
+  function stopPlaying(): void {
     playing = false;
     // 押しっぱなし・倒しっぱなしの判定が残らないように全部戻す。
     player.clearKeys();
     // 隠さないと、開始画面の上にボタンが重なって表示されてしまう。
     touchControls?.setActive(false);
-    overlay.show(message);
-  };
+    overlay.show(PAUSE_HINT);
+  }
 
-  const overlay = new Overlay(document.getElementById('ui')!, seed, {
-    onStart: () => {
-      startAudio();
-      connect();
+  function handleStart(): void {
+    startAudio();
+    connect();
 
-      if (touch) {
-        startPlaying();
-        return;
-      }
-      // Esc を押した直後はブラウザがしばらくロックを受け付けない。
-      // 拒否されても例外にせず、押し直すよう促すだけにする。
-      const request = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
-      request?.catch?.(() => overlay.flash('少し待ってから、もう一度クリックしてください'));
-    },
-    onVolume: (v) => audio?.setVolume(v),
-  });
+    if (touch) {
+      startPlaying();
+      return;
+    }
+    // Esc を押した直後はブラウザがしばらくロックを受け付けない。
+    // 拒否されても例外にせず、押し直すよう促すだけにする。
+    const request = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+    request?.catch?.(() => overlay.flash('少し待ってから、もう一度クリックしてください'));
+  }
 
   if (touch) {
     touchControls = createTouchControls({
@@ -193,7 +205,7 @@ function main(): void {
       player,
       lookSensitivity: LOOK_SENSITIVITY,
       isPlaying: () => playing,
-      onPause: () => stopPlaying('休憩中。タップすると続きから歩けます。'),
+      onPause: stopPlaying,
     });
   }
 
@@ -226,15 +238,13 @@ function main(): void {
     if (document.pointerLockElement === canvas) {
       startPlaying();
     } else if (!touch) {
-      stopPlaying('休憩中。クリックすると続きから歩けます。');
+      stopPlaying();
     }
   });
 
   // 別のアプリに移ったら止める。スマホでは戻ってきたとき勝手に歩いていると困る。
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && playing) {
-      stopPlaying(touch ? '休憩中。タップすると続きから歩けます。' : '休憩中。クリックすると続きから歩けます。');
-    }
+    if (document.hidden && playing) stopPlaying();
   });
 
   const timer = new THREE.Timer();
@@ -260,13 +270,7 @@ function main(): void {
 
     if (connection) {
       // 動いていなければ、この呼び出しは何も送らない。
-      connection.update(performance.now(), {
-        x: player.position.x,
-        y: player.position.y,
-        z: player.position.z,
-        yaw: player.yaw,
-        flying: player.flying,
-      });
+      connection.update(performance.now(), playerState());
       overlay.setPeers(connection.peerCount, netMessage);
     }
     avatars.update(dt, camera);

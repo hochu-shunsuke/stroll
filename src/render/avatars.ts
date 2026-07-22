@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { hash2 } from '../core/rng';
 import type { PlayerState } from '../net/connection';
+import { EYE_HEIGHT } from '../player/controller';
 
 /** 名前が読めなくなる距離。これより遠い相手のラベルは消す。 */
 const LABEL_RANGE = 70;
@@ -12,6 +13,8 @@ interface Avatar {
   label: THREE.Sprite;
   material: THREE.MeshLambertMaterial;
   target: THREE.Vector3;
+  /** 座標がまだ一度も届いていない相手は描かない。 */
+  placed: boolean;
 }
 
 function paint(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
@@ -35,13 +38,14 @@ let bodyGeometry: THREE.BufferGeometry | null = null;
  * 丸い筒。顔も手足も付けない。
  *
  * 人型に寄せるほど不気味になったので、素直に「そこに誰かがいる」だけを示す形にした。
- * 身長はちょうど 1.68m で、足が地面に着くようこの値で位置をずらしている。
+ * 身長は本人の目線の高さと同じ。届く y が目線の高さなので、
+ * 足を地面に着けるにはこの分だけ下げる必要がある。
  * 体は白く塗っておき、プレイヤーごとの色はマテリアル側で乗算する。
  */
 function body(): THREE.BufferGeometry {
   if (bodyGeometry) return bodyGeometry;
   const radius = 0.3;
-  const height = 1.68;
+  const height = EYE_HEIGHT;
   bodyGeometry = paint(
     new THREE.CapsuleGeometry(radius, height - radius * 2, 6, 16).translate(0, height / 2, 0),
     0xffffff,
@@ -90,7 +94,14 @@ function makeLabel(name: string): THREE.Sprite {
   texture.minFilter = THREE.LinearFilter;
 
   const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true }),
+    new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: true,
+      // 深度を書かないこと。書くと透明な角の部分まで手前の物として扱われ、
+      // 後から描かれる水面がその四角形の範囲だけ消えて、湖底が黒く見える。
+      depthWrite: false,
+    }),
   );
   const scale = 0.55;
   sprite.scale.set((width / height) * scale, scale, 1);
@@ -132,10 +143,10 @@ export class Avatars {
     const label = makeLabel(name);
     group.add(label);
 
-    if (state) {
-      // 足元を置きたいので、送られてくる目線の高さから身長を引く。
-      group.position.set(state.x, state.y - 1.68, state.z);
-    }
+    // 座標を伴わずに入ってくることがある。その場合は原点に立たせず、
+    // 最初の座標が届くまで隠しておく。
+    if (state) group.position.set(state.x, state.y - EYE_HEIGHT, state.z);
+    group.visible = state !== null;
 
     this.scene.add(group);
     this.avatars.set(id, {
@@ -143,13 +154,20 @@ export class Avatars {
       label,
       material,
       target: group.position.clone(),
+      placed: state !== null,
     });
   }
 
   setState(id: string, state: PlayerState): void {
     const a = this.avatars.get(id);
     if (!a) return;
-    a.target.set(state.x, state.y - 1.68, state.z);
+    a.target.set(state.x, state.y - EYE_HEIGHT, state.z);
+    if (!a.placed) {
+      // 初回は補間せずその場に置く。遠くから滑って来ると驚くので。
+      a.group.position.copy(a.target);
+      a.group.visible = true;
+      a.placed = true;
+    }
   }
 
   remove(id: string): void {

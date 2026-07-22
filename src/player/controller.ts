@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import { LOD_STEPS } from '../world/chunk';
 import { SEA_LEVEL, type Terrain } from '../world/terrain';
 
-const EYE_HEIGHT = 1.68;
+/**
+ * 目線の高さ。通信で送る y はこの高さの値なので、
+ * 他人のアバターの身長もこれに合わせる必要がある。
+ */
+export const EYE_HEIGHT = 1.68;
 const WALK_SPEED = 5.4;
 const SPRINT_SPEED = 10.5;
 const SWIM_SPEED = 3.2;

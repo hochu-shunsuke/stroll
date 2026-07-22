@@ -28,6 +28,7 @@ export class Overlay {
   name: string;
 
   private peers: HTMLElement;
+  private peersText = '';
 
   constructor(root: HTMLElement, seed: string, handlers: OverlayHandlers) {
     this.root = root;
@@ -109,15 +110,15 @@ export class Overlay {
     });
   }
 
-  /** 画面の隅に「今この世界に何人いるか」を出す。 */
+  /**
+   * 画面の隅に「今この世界に何人いるか」を出す。
+   * 毎フレーム呼ばれるので、変わっていないときは触らない。
+   */
   setPeers(count: number, message: string | null): void {
-    if (message) {
-      this.peers.textContent = message;
-    } else if (count > 0) {
-      this.peers.textContent = `ほかに ${count} 人`;
-    } else {
-      this.peers.textContent = '';
-    }
+    const text = message ?? (count > 0 ? `ほかに ${count} 人` : '');
+    if (text === this.peersText) return;
+    this.peersText = text;
+    this.peers.textContent = text;
   }
 
   /** 足元の地形が揃ったら歩き始められるようにする。 */
