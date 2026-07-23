@@ -40,18 +40,19 @@ export function normalizeSeed(input: unknown): string | null {
   return isSeed(value) ? value : null;
 }
 
-/** 入力途中の文字を、使える文字だけに削る。入力欄で 1 文字ごとに使う。 */
-export function filterSeedInput(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .slice(0, SEED_LENGTH);
+/**
+ * 使える文字（小文字と数字）だけを残す。大文字は小文字に直す。
+ * 入力欄が 1 文字ごとに通す。使える文字の定義をここ 1 つに閉じ込めるため、
+ * 入力側で正規表現を書き散らかさない。
+ */
+export function keepSeedChars(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**
  * 新しい合言葉を作る。
  *
- * 32 文字から 6 文字なので約 10 億通り。ここを狭めると、
+ * 32 文字から 8 文字なので約 1.1 兆通り。ここを狭めると、
  * 無関係な人同士が同じ世界に居合わせてしまう（1 人で歩きたい人には事故になる）。
  */
 export function randomSeed(): string {

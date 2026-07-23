@@ -1,4 +1,4 @@
-import { SEED_LENGTH, isSeed, randomSeed } from '../../shared/seed';
+import { SEED_LENGTH, isSeed, keepSeedChars, randomSeed } from '../../shared/seed';
 
 /**
  * 合言葉を 1 文字ずつ 8 マスで入力する欄。隣にサイコロ（引き直し）。
@@ -64,8 +64,7 @@ export class SeedField {
   private wire(cell: HTMLInputElement, index: number): void {
     cell.addEventListener('input', () => {
       // 使える文字だけ残す。貼り付けで複数入っても 1 文字に詰める。
-      const cleaned = cell.value.toLowerCase().replace(/[^a-z0-9]/g, '');
-      cell.value = cleaned.slice(-1);
+      cell.value = keepSeedChars(cell.value).slice(-1);
       // 何か入ったら次のマスへ。最後のマスが埋まれば確定を試す。
       if (cell.value && index < SEED_LENGTH - 1) {
         this.cells[index + 1].focus();
@@ -96,10 +95,7 @@ export class SeedField {
     // 8 文字まとめて貼り付けられたら、全マスに配る。
     cell.addEventListener('paste', (e) => {
       e.preventDefault();
-      const text = (e.clipboardData?.getData('text') ?? '')
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, '')
-        .slice(0, SEED_LENGTH);
+      const text = keepSeedChars(e.clipboardData?.getData('text') ?? '').slice(0, SEED_LENGTH);
       if (!text) return;
       // 貼り付けた位置から順に埋める。
       for (let i = 0; i < text.length && index + i < SEED_LENGTH; i++) {
