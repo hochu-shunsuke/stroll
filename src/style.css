@@ -43,15 +43,14 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
-  justify-items: center;
-  justify-content: center;
-  /* 入りきらないときは上を切らずにスクロールさせる。
-     safe を付けないと、はみ出したときに頭が画面外へ追い出される。 */
-  align-content: safe center;
+  place-content: safe center;
   overflow-y: auto;
-  padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
-  background: radial-gradient(120% 100% at 50% 40%, rgba(18, 30, 36, 0.45), rgba(12, 20, 26, 0.82));
-  backdrop-filter: blur(3px);
+  /* 横は常に最低 24px の余白。スマホで端に張り付かせない。 */
+  padding:
+    max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background: radial-gradient(130% 100% at 50% 35%, rgba(20, 32, 38, 0.4), rgba(10, 17, 22, 0.85));
+  backdrop-filter: blur(4px);
   pointer-events: auto;
   transition: opacity 700ms ease, visibility 700ms;
 }
@@ -62,28 +61,35 @@ body {
 }
 
 .card {
-  /* ラベルの幅。補足文の字下げもこれに揃える。 */
-  --label-w: 48px;
-  width: min(420px, 100%);
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
   text-align: center;
-  background: rgba(16, 26, 32, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
-  padding: 34px 30px 28px;
+  background: rgba(18, 27, 33, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  padding: clamp(28px, 6vw, 40px) clamp(24px, 5vw, 34px);
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .card h1 {
-  margin: 0 0 10px;
-  font-size: 30px;
+  margin: 0;
+  font-size: 28px;
   font-weight: 500;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
+  letter-spacing: 0.24em;
+  text-indent: 0.24em;
 }
 
 .lead {
-  margin: 0 0 18px;
-  font-size: 13.5px;
-  line-height: 1.75;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
   color: var(--muted);
 }
 
@@ -91,15 +97,63 @@ button {
   font: inherit;
   cursor: pointer;
   border-radius: 999px;
-  transition: background 200ms ease, border-color 200ms ease, opacity 200ms ease;
+  transition: background 200ms ease, border-color 200ms ease, opacity 200ms ease, transform 120ms ease;
 }
 
-.start {
+/* ---- 入力欄 ---- */
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  text-align: left;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #8ea0a6;
+}
+
+.hint {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #7d8e94;
+}
+
+.field input.name {
   width: 100%;
-  /* 下の余白はこの要素が持つ。隣の説明文の margin に頼ると、
-     説明を隠した端末でボタンが次の欄にくっつく。 */
-  margin-bottom: 22px;
-  padding: 13px 18px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 10px 13px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.field input.name:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.field input.name::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+/* ---- ボタン ---- */
+
+.start {
+  align-self: center;
+  min-width: 210px;
+  padding: 13px 32px;
   font-size: 14.5px;
   color: #10201f;
   background: #dfe9e6;
@@ -110,22 +164,69 @@ button {
   background: #fff;
 }
 
+.start:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .start:disabled {
   cursor: default;
-  opacity: 0.5;
-  background: rgba(223, 233, 230, 0.35);
-  color: rgba(255, 255, 255, 0.75);
+  opacity: 0.45;
+  background: rgba(223, 233, 230, 0.3);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.share {
+  align-self: center;
+  margin-top: -12px;
+  padding: 7px 16px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+}
+
+.share:hover {
+  color: var(--ink);
+}
+
+/* ---- 操作の説明（折りたたみ） ---- */
+
+.controls {
+  font-size: 11px;
+  color: #8ea0a6;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 18px;
+}
+
+.controls summary {
+  cursor: pointer;
+  list-style: none;
+  letter-spacing: 0.14em;
+  color: #7d8e94;
+  user-select: none;
+}
+
+.controls summary::-webkit-details-marker {
+  display: none;
+}
+
+.controls summary::after {
+  content: ' ＋';
+  opacity: 0.6;
+}
+
+.controls[open] summary::after {
+  content: ' －';
 }
 
 .keys {
   list-style: none;
-  margin: 0 0 20px;
+  margin: 16px 0 0;
   padding: 0;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px 14px;
-  font-size: 11.5px;
   color: var(--muted);
 }
 
@@ -135,78 +236,21 @@ button {
   gap: 5px;
 }
 
-kbd {
-  font: inherit;
-  font-size: 10.5px;
-  min-width: 20px;
-  padding: 3px 5px;
-  text-align: center;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.11);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.note {
-  margin: -6px 0 18px;
-  font-size: 11px;
-  line-height: 1.7;
-  color: #8ea0a6;
-}
-
-.note kbd {
-  font-size: 9.5px;
-}
-
-.field {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 12px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: #8ea0a6;
-}
-
-.field > span {
-  width: var(--label-w);
-  text-align: left;
-  flex: none;
-  white-space: nowrap;
-}
-
-.field:last-of-type {
-  margin-bottom: 18px;
-}
-
-.hint {
-  margin: -6px 0 14px;
-  padding-left: calc(var(--label-w) + 12px);
-  text-align: left;
-  font-size: 10.5px;
+.controls-note {
+  margin: 12px 0 0;
   line-height: 1.6;
   color: #7d8e94;
 }
 
-.field input.name {
-  flex: 1;
-  min-width: 0;
+kbd {
   font: inherit;
-  font-size: 12.5px;
-  letter-spacing: normal;
-  color: var(--ink);
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.field input.name:focus {
-  outline: none;
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-.field input.name::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  font-size: 10px;
+  min-width: 19px;
+  padding: 3px 5px;
+  text-align: center;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.13);
 }
 
 /* 合言葉の 8 マス。1 文字ずつ独立して見えるようにする。 */
@@ -375,18 +419,13 @@ kbd {
    条件は JS が決めた結果（data-input）を見る。メディアクエリで独立に
    判定すると、JS 側の判断と食い違って中途半端な画面になる。 */
 :root[data-input='touch'] {
-  .card {
-    padding: 28px 22px 24px;
-  }
-
   .start {
-    padding: 16px 18px;
+    padding: 15px 36px;
     font-size: 15.5px;
   }
 
   /* iOS は 16px 未満の入力欄に触れると画面を拡大する。 */
   .field input.name {
-    padding: 11px 12px;
     font-size: 16px;
   }
 
@@ -402,23 +441,9 @@ kbd {
 
   /* 操作の説明はタッチ端末では出さない。触れば分かるうえ、
      狭い画面では文章が場所を食って他の要素と重なる。 */
-  .keys,
-  .note-keys {
+  .controls {
     display: none;
   }
-}
-
-.share {
-  padding: 8px 16px;
-  font-size: 11.5px;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-.share:hover {
-  color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.34);
 }
 
 .hud {

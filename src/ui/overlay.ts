@@ -42,28 +42,39 @@ export class Overlay {
     this.root.innerHTML = `
       <div class="veil">
         <div class="card">
-          <h1>stroll</h1>
-          <p class="lead">歩くだけの世界です。目的も、期限もありません。</p>
-          <button class="start" disabled>地形を生成しています…</button>
-          <ul class="keys">
-            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 歩く</li>
-            <li><kbd>W</kbd><kbd>W</kbd> 走る</li>
-            <li><kbd>Space</kbd> 跳ぶ</li>
-            <li><kbd>Space</kbd><kbd>Space</kbd> 飛ぶ / 戻す</li>
-            <li><kbd>M</kbd> 消音</li>
-            <li><kbd>Esc</kbd> 一時停止</li>
-          </ul>
-          <p class="note note-keys">飛行中は見ている方へ進みます。<kbd>Space</kbd> で上昇、<kbd>Shift</kbd> で下降。</p>
-          <label class="field">
-            <span>名前</span>
-            <input class="name" type="text" maxlength="${MAX_NAME_LENGTH}"
-              placeholder="友達に表示される名前" value="${escapeHtml(this.name)}" />
-          </label>
-          <div class="field seed-row">
-            <span>合言葉</span>
+          <header class="brand">
+            <h1>stroll</h1>
+            <p class="lead">歩くだけの世界。目的も、期限もない。</p>
+          </header>
+
+          <div class="fields">
+            <label class="field">
+              <span class="field-label">名前</span>
+              <input class="name" type="text" maxlength="${MAX_NAME_LENGTH}"
+                placeholder="友達に表示される名前" value="${escapeHtml(this.name)}" />
+            </label>
+            <div class="field">
+              <span class="field-label">合言葉</span>
+              <div class="seed-row"></div>
+              <p class="hint">同じ合言葉なら、同じ地形。</p>
+            </div>
           </div>
-          <p class="hint">同じ合言葉なら同じ地形。友達と一緒に歩けます。</p>
+
+          <button class="start" disabled>地形を生成しています…</button>
           <button class="share">この世界のURLをコピー</button>
+
+          <details class="controls">
+            <summary>操作</summary>
+            <ul class="keys">
+              <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 歩く</li>
+              <li><kbd>W</kbd><kbd>W</kbd> 走る</li>
+              <li><kbd>Space</kbd> 跳ぶ</li>
+              <li><kbd>Space</kbd><kbd>Space</kbd> 飛ぶ</li>
+              <li><kbd>M</kbd> 消音</li>
+              <li><kbd>Esc</kbd> 一時停止</li>
+            </ul>
+            <p class="controls-note">飛行中は見ている方へ進みます。<kbd>Space</kbd> 上昇、<kbd>Shift</kbd> 下降。</p>
+          </details>
         </div>
       </div>
       <div class="hud">
