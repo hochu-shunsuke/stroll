@@ -29,6 +29,13 @@ const TURN_EPSILON = 0.012;
 const RECONNECT_MS = 3000;
 /** 一度も繋がらないまま何回試すか。落ちているサーバを叩き続けない。 */
 const MAX_COLD_RETRIES = 3;
+/** キープアライブの間隔。無通信で切られる前に届く程度に短く。 */
+const PING_INTERVAL_MS = 25000;
+
+/** このブラウザの固定 ID。英数字だけ（サーバ側の検証と揃える）。 */
+function randomCid(): string {
+  return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6);
+}
 
 /**
  * 部屋への接続。座標だけを中継する。
@@ -43,7 +50,13 @@ export class Connection {
   private everOpened = false;
   private coldRetries = 0;
   private retryTimer = 0;
+  private pingTimer = 0;
   private peers = new Set<string>();
+  /**
+   * このブラウザの固定 ID。再接続しても変わらない。
+   * サーバがこれで「古い自分の接続」を見分けて消す（死体が残らない）。
+   */
+  private readonly cid = randomCid();
 
   private url: string;
   private seed: string;
@@ -92,13 +105,15 @@ export class Connection {
       const state = this.getState();
       this.lastSent = state;
       this.lastSentAt = performance.now();
-      ws.send(JSON.stringify({ t: 'hello', name: this.name, s: state }));
+      ws.send(JSON.stringify({ t: 'hello', cid: this.cid, name: this.name, s: state }));
+      this.startPing();
     };
 
     ws.onmessage = (ev) => this.receive(ev.data);
 
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
+      clearInterval(this.pingTimer);
       // 残っていた他人を消す。繋ぎ直すと相手側の ID も振り直しになる。
       for (const id of this.peers) this.handlers.onLeave(id);
       this.peers.clear();
@@ -107,6 +122,18 @@ export class Connection {
 
     // onerror の直後に必ず onclose が来るので、ここでは何もしない。
     ws.onerror = () => {};
+  }
+
+  /**
+   * 無通信でも回線を保つ。立ち止まって座標を送らない間も、
+   * 一定間隔で "ping" を送る。サーバは休眠したまま "pong" を自動で返す。
+   * 途中の機器が「無通信だから」と回線を切るのを防ぐ。
+   */
+  private startPing(): void {
+    clearInterval(this.pingTimer);
+    this.pingTimer = window.setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send('ping');
+    }, PING_INTERVAL_MS);
   }
 
   private scheduleReconnect(): void {

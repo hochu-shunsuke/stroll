@@ -20,9 +20,18 @@ interface PlayerState {
 
 /** WebSocket に紐づけて保存する情報。休眠から復帰しても残る。 */
 interface Attachment {
+  /** サーバが振る表示用の識別子。他人の画面のアバターを結びつける。 */
   id: string;
+  /** ブラウザが持つ固定の識別子。再接続しても同じ。古い自分を消すのに使う。 */
+  cid: string;
   name: string;
   state: PlayerState | null;
+}
+
+/** 合言葉に使える文字と同じで、cid の検証にも流用できる長さ。 */
+function cleanCid(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(/[^a-z0-9]/gi, '').slice(0, 32);
 }
 
 /** 表示名は他人の画面に出るので、長さと文字種を絞る。 */
@@ -51,6 +60,10 @@ export class Room {
 
   constructor(state: DurableObjectState) {
     this.state = state;
+    // クライアントの "ping" に休眠したまま "pong" を返す。
+    // 無通信でも回線が生き続けるので、立ち止まっていて切られる事故を防ぐ。
+    // 自動応答なので DO を起こさず、課金も増えない。
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -69,6 +82,7 @@ export class Room {
     this.state.acceptWebSocket(server);
     server.serializeAttachment({
       id: crypto.randomUUID().slice(0, 8),
+      cid: '',
       name: '',
       state: null,
     } satisfies Attachment);
@@ -93,15 +107,34 @@ export class Room {
       // 名前が未設定の間は他人から見えない扱いにしている。
       if (me.name) return;
       me.name = cleanName(msg.name) || '名無し';
+      me.cid = cleanCid(msg.cid);
       me.state = cleanState(msg.s);
       ws.serializeAttachment(me);
 
+      // 再接続の後始末。同じブラウザ（cid）の古い接続がまだ残っていたら、
+      // それが「自分の死体」として見えるので、ここで閉じて他人にも退場を伝える。
+      // close は遅れて届くことがあるため、下の others でも cid で弾く。
+      if (me.cid) {
+        for (const other of this.state.getWebSockets()) {
+          if (other === ws) continue;
+          const a = other.deserializeAttachment() as Attachment | null;
+          if (a && a.cid === me.cid) {
+            try {
+              other.close(1000, 'replaced');
+            } catch {
+              // 既に閉じかけていれば無視。
+            }
+          }
+        }
+      }
+
       // join と同じ形（id / name / s）で返す。受け手が場合分けせずに済むように。
+      // 同じ cid（＝古い自分）は必ず除く。close の遅延に関係なく死体を出さない。
       const others: { id: string; name: string; s: PlayerState | null }[] = [];
       for (const other of this.state.getWebSockets()) {
         if (other === ws) continue;
         const a = other.deserializeAttachment() as Attachment | null;
-        if (a?.name) others.push({ id: a.id, name: a.name, s: a.state });
+        if (a?.name && a.cid !== me.cid) others.push({ id: a.id, name: a.name, s: a.state });
       }
       ws.send(JSON.stringify({ t: 'welcome', id: me.id, players: others }));
       this.broadcast(ws, { t: 'join', id: me.id, name: me.name, s: me.state });
