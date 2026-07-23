@@ -45,17 +45,18 @@ function findSpawn(terrain: Terrain): { x: number; z: number } {
 }
 
 function main(): void {
-  // 合言葉はパスに置く。/abc123 のように、余計な記号を挟まない形にしている。
-  // 決まりに合わないものが来たら黙って新しい世界を作る（エラー画面は出さない）。
-  const requested = location.pathname.slice(1);
-  const fromPath = normalizeSeed(requested);
-  const seed = fromPath ?? randomSeed();
-  if (fromPath !== seed) {
-    history.replaceState(null, '', `/${seed}`);
+  // 合言葉は URL の `#` より後ろに置く（/#k7p2mq9x）。
+  // `#` 以降はサーバに送られないので、打ち間違えても 404 にならず、
+  // 経路の場合分けも要らない。合言葉を変えるのもページ内で完結する。
+  const requested = location.hash.slice(1);
+  const fromHash = normalizeSeed(requested);
+  const seed = fromHash ?? randomSeed();
+  if (fromHash !== seed) {
+    history.replaceState(null, '', `#${seed}`);
   }
   // 読めない合言葉で来た人に黙って別の世界を渡すと、
   // 着いたつもりで誰もいない場所を歩くことになる。必ず伝える。
-  const badSeed = requested.length > 0 && fromPath === null;
+  const badSeed = requested.length > 0 && fromHash === null;
 
   const touch = isTouchDevice();
   // 判定はここ 1 か所だけ。CSS もこの結果を見る。
@@ -142,7 +143,9 @@ function main(): void {
     onStart: () => handleStart(),
     // 地形も部屋も合言葉から作られるので、作り直すより読み込み直す方が確実。
     onSeed: (next) => {
-      location.href = `/${next}`;
+      // 世界そのものを作り直すので、合言葉を差し替えてから読み込み直す。
+      location.hash = next;
+      location.reload();
     },
   });
 

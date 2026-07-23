@@ -169,13 +169,13 @@ export class Overlay {
   }
 
   private async copyUrl(): Promise<void> {
-    const url = new URL(location.href);
-    url.searchParams.set('seed', this.seed);
+    // 合言葉は `#` に載せる。クエリも余計な記号も付けない。
+    const url = `${location.origin}${location.pathname}#${this.seed}`;
     try {
-      await navigator.clipboard.writeText(url.toString());
+      await navigator.clipboard.writeText(url);
       this.flash('URLをコピーしました。同じ地形が開きます。');
     } catch {
-      this.flash(url.toString());
+      this.flash(url);
     }
   }
 
