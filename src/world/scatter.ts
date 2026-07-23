@@ -24,62 +24,74 @@ interface KindSpec {
   /** この LOD 以下のチャンクにだけ生やす。 */
   maxLod: number;
   /** 置くならスケールを、置かないなら 0 を返す。 */
-  place(h: number, slope: number, moisture: number, r: number): number;
+  place(h: number, slope: number, temp: number, moisture: number, r: number): number;
 }
 
 const SPECS: KindSpec[] = [
   {
+    // 広葉樹: 温帯〜暖帯の湿った所。寒い地方と砂漠には生えない。
     kind: KIND_BROADLEAF,
     spacing: 7,
     salt: 1301,
     maxLod: 1,
-    place: (h, slope, moisture, r) => {
+    place: (h, slope, temp, moisture, r) => {
       if (h < 3.2 || h > 52 || slope > 0.42) return 0;
-      // 湿った低地ほど密に。高くなると針葉樹に譲る。
-      const density = smoothstep(0.34, 0.68, moisture) * (1 - smoothstep(34, 52, h)) * 0.85;
+      const climate = smoothstep(0.34, 0.68, moisture) * band(temp, 0.4, 0.62, 0.9);
+      const density = climate * (1 - smoothstep(34, 52, h)) * 0.9;
       if (r > density) return 0;
       return 0.75 + ((r * 977) % 1) * 0.6;
     },
   },
   {
+    // 針葉樹: 涼しい所。寒帯や山の中腹を担う。
     kind: KIND_PINE,
     spacing: 8,
     salt: 4409,
     maxLod: 1,
-    place: (h, slope, moisture, r) => {
-      if (h < 14 || h > 84 || slope > 0.5) return 0;
-      const density =
-        smoothstep(0.24, 0.58, moisture) * smoothstep(14, 34, h) * (1 - smoothstep(66, 84, h)) * 0.8;
+    place: (h, slope, temp, moisture, r) => {
+      if (h < 6 || h > 96 || slope > 0.5) return 0;
+      const climate = smoothstep(0.22, 0.55, moisture) * band(temp, 0.12, 0.34, 0.6);
+      const density = climate * 0.85;
       if (r > density) return 0;
       return 0.8 + ((r * 613) % 1) * 0.7;
     },
   },
   {
+    // 岩: 気候によらず、急斜面と高所に転がる。
     kind: KIND_ROCK,
     spacing: 17,
     salt: 7717,
     maxLod: 1,
-    place: (h, slope, _moisture, r) => {
+    place: (h, slope, _temp, _moisture, r) => {
       if (h < 1.0) return 0;
-      // 急斜面と高所に転がっている方が自然。
       const density = (0.12 + smoothstep(0.3, 0.7, slope) * 0.5 + smoothstep(50, 90, h) * 0.3) * 0.6;
       if (r > density) return 0;
       return 0.6 + ((r * 331) % 1) * 2.4;
     },
   },
   {
+    // 低木: 暖かく湿った所の下草。砂漠と寒帯には出さない。
     kind: KIND_BUSH,
     spacing: 5,
     salt: 2237,
     maxLod: 0,
-    place: (h, slope, moisture, r) => {
+    place: (h, slope, temp, moisture, r) => {
       if (h < 2.4 || h > 60 || slope > 0.55) return 0;
-      const density = smoothstep(0.2, 0.6, moisture) * 0.5;
+      const climate = smoothstep(0.28, 0.6, moisture) * band(temp, 0.35, 0.6, 0.92);
+      const density = climate * 0.55;
       if (r > density) return 0;
       return 0.7 + ((r * 149) % 1) * 0.9;
     },
   },
 ];
+
+/**
+ * 値が [lo, hi] の帯に入っているほど 1 に近づく（山なりの窓）。
+ * 気温の得意な範囲を植生ごとに切り出すのに使う。
+ */
+function band(v: number, lo: number, mid: number, hi: number): number {
+  return v < mid ? smoothstep(lo, mid, v) : smoothstep(hi, mid, v);
+}
 
 /** 3 点差分で地面の傾き（0=平ら, 1=垂直に近い）を測る。 */
 function slopeAt(t: Terrain, x: number, z: number, h: number): number {
@@ -149,8 +161,9 @@ export function buildScatterData(
         // 水面下と、明らかに条件外の場所は重い判定に入る前に落とす。
         if (h < 0.8) continue;
         const moisture = terrain.moistureAt(x, z);
+        const temp = terrain.temperatureAt(x, z, h);
         const slope = slopeAt(terrain, x, z, h);
-        const scale = spec.place(h, slope, moisture, r);
+        const scale = spec.place(h, slope, temp, moisture, r);
         if (scale <= 0) continue;
 
         const yaw = hash2(gx, gz, spec.salt + 3) * Math.PI * 2;
