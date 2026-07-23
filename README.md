@@ -5,8 +5,8 @@
 URL を共有すると、同じ地形を友達と一緒に歩ける。
 
 ```
-https://stroll-relay.hochu.workers.dev/mikaze
-                                       ^^^^^^ 合言葉。英数字 6 文字
+https://stroll-relay.hochu.workers.dev/k7p2mq9x
+                                       ^^^^^^^^ 合言葉。英数字 8 文字
 ```
 
 公開版: https://stroll-relay.hochu.workers.dev

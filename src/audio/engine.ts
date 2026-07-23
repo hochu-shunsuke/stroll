@@ -14,14 +14,14 @@ export class AudioEngine {
   readonly white: AudioBuffer;
   readonly brown: AudioBuffer;
 
-  private volume = 0.75;
   private muted = false;
 
   constructor() {
     this.ctx = new AudioContext();
 
     this.master = this.ctx.createGain();
-    this.master.gain.value = this.volume;
+    // 音量は常に最大。全体の大きさは端末側で調整してもらう。
+    this.master.gain.value = 1;
     this.master.connect(this.ctx.destination);
 
     const convolver = this.ctx.createConvolver();
@@ -51,20 +51,10 @@ export class AudioEngine {
     return src;
   }
 
-  setVolume(v: number): void {
-    this.volume = v;
-    this.applyGain();
-  }
-
   toggleMute(): boolean {
     this.muted = !this.muted;
-    this.applyGain();
+    this.master.gain.setTargetAtTime(this.muted ? 0 : 1, this.ctx.currentTime, 0.05);
     return this.muted;
-  }
-
-  private applyGain(): void {
-    const g = this.muted ? 0 : this.volume;
-    this.master.gain.setTargetAtTime(g, this.ctx.currentTime, 0.05);
   }
 }
 

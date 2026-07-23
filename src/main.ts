@@ -140,7 +140,6 @@ function main(): void {
   // アロー関数の const にすると、呼ばれる順番だけが頼りの危うい形になる。
   const overlay = new Overlay(document.getElementById('ui')!, seed, touch, {
     onStart: () => handleStart(),
-    onVolume: (v) => audio?.setVolume(v),
     // 地形も部屋も合言葉から作られるので、作り直すより読み込み直す方が確実。
     onSeed: (next) => {
       location.href = `/${next}`;
@@ -155,7 +154,6 @@ function main(): void {
     audio = new AudioEngine();
     ambience = new Ambience(audio);
     footsteps = new Footsteps(audio);
-    audio.setVolume(overlay.volume);
     player.onFootstep = (intensity) => footsteps!.step(intensity);
     player.onLand = (intensity) => footsteps!.land(intensity);
   }

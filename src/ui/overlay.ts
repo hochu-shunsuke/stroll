@@ -2,12 +2,10 @@ import { SEED_LENGTH, filterSeedInput, normalizeSeed } from '../../shared/seed';
 
 export interface OverlayHandlers {
   onStart: () => void;
-  onVolume: (value: number) => void;
   /** 合言葉が変わったとき。世界ごと作り直すので読み込み直す。 */
   onSeed: (seed: string) => void;
 }
 
-const VOLUME_KEY = 'stroll:volume';
 const NAME_KEY = 'stroll:name';
 const MAX_NAME_LENGTH = 16;
 
@@ -26,8 +24,6 @@ export class Overlay {
   private handlers: OverlayHandlers;
   private toastTimer = 0;
 
-  /** 0..1。前回の設定を覚えておく。 */
-  volume: number;
   /** 他の人の画面に出る表示名。 */
   name: string;
 
@@ -42,8 +38,6 @@ export class Overlay {
     this.touch = touch;
     this.handlers = handlers;
 
-    const saved = Number(localStorage.getItem(VOLUME_KEY));
-    this.volume = Number.isFinite(saved) && saved >= 0 && saved <= 1 ? saved : 0.75;
     this.name = (localStorage.getItem(NAME_KEY) ?? '').slice(0, MAX_NAME_LENGTH);
 
     this.root.innerHTML = `
@@ -73,10 +67,6 @@ export class Overlay {
               placeholder="英数字${SEED_LENGTH}文字" value="${escapeHtml(seed)}" />
           </label>
           <p class="hint">同じ合言葉なら同じ地形。友達と一緒に歩けます。</p>
-          <label class="field">
-            <span>音量</span>
-            <input class="vol" type="range" min="0" max="1" step="0.01" value="${this.volume}" />
-          </label>
           <button class="share">この世界のURLをコピー</button>
         </div>
       </div>
@@ -98,13 +88,6 @@ export class Overlay {
 
     this.startBtn.addEventListener('click', () => this.handlers.onStart());
     this.root.querySelector('.share')!.addEventListener('click', () => this.copyUrl());
-
-    const slider = this.root.querySelector('.vol') as HTMLInputElement;
-    slider.addEventListener('input', () => {
-      this.volume = Number(slider.value);
-      localStorage.setItem(VOLUME_KEY, String(this.volume));
-      this.handlers.onVolume(this.volume);
-    });
 
     const nameInput = this.root.querySelector('.name') as HTMLInputElement;
     nameInput.addEventListener('input', () => {

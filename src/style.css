@@ -209,22 +209,7 @@ kbd {
   color: rgba(255, 255, 255, 0.3);
 }
 
-input.vol {
-  flex: 1;
-  appearance: none;
-  height: 3px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.18);
-  cursor: pointer;
-}
 
-input.vol::-webkit-slider-thumb {
-  appearance: none;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #dfe9e6;
-}
 
 .hud-peers::before {
   content: '·';
@@ -341,11 +326,6 @@ input.vol::-webkit-slider-thumb {
   .field input[type='text'] {
     padding: 11px 12px;
     font-size: 16px; /* iOS はこれ未満だと入力時に画面を拡大する */
-  }
-
-  input.vol::-webkit-slider-thumb {
-    width: 22px;
-    height: 22px;
   }
 
   /* 操作の説明はタッチ端末では出さない。触れば分かるうえ、
