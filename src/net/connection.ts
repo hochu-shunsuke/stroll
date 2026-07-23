@@ -32,9 +32,29 @@ const MAX_COLD_RETRIES = 3;
 /** キープアライブの間隔。無通信で切られる前に届く程度に短く。 */
 const PING_INTERVAL_MS = 25000;
 
-/** このブラウザの固定 ID。英数字だけ（サーバ側の検証と揃える）。 */
-function randomCid(): string {
-  return Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6);
+const CID_KEY = 'stroll:cid';
+
+/**
+ * このタブの固定 ID。英数字だけ（サーバ側の検証と揃える）。
+ *
+ * sessionStorage に置くのが肝。スマホは別アプリに切り替えて戻るとタブを
+ * 再読み込みするので、メモリだけに持つと ID が変わり、サーバが古い自分を
+ * 消せずに死体が残る。sessionStorage は再読み込みでは消えず、タブごとに
+ * 別なので、再読み込みは同じ ID・別タブは別 ID になる（どちらも正しい）。
+ */
+function stableCid(): string {
+  const fresh = () =>
+    Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 6);
+  try {
+    const saved = sessionStorage.getItem(CID_KEY);
+    if (saved && /^[a-z0-9]{1,32}$/.test(saved)) return saved;
+    const id = fresh();
+    sessionStorage.setItem(CID_KEY, id);
+    return id;
+  } catch {
+    // sessionStorage が使えない環境（稀）ではメモリ限りで妥協する。
+    return fresh();
+  }
 }
 
 /**
@@ -53,10 +73,10 @@ export class Connection {
   private pingTimer = 0;
   private peers = new Set<string>();
   /**
-   * このブラウザの固定 ID。再接続しても変わらない。
+   * このタブの固定 ID。再接続しても、スマホの再読み込みでも変わらない。
    * サーバがこれで「古い自分の接続」を見分けて消す（死体が残らない）。
    */
-  private readonly cid = randomCid();
+  private readonly cid = stableCid();
 
   private url: string;
   private seed: string;
