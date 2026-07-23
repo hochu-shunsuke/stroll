@@ -7,8 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "typecheck:server": "tsc --noEmit -p server/tsconfig.json",
+    "test": "node --experimental-strip-types test/seed.test.mjs",
+    "ci": "npm run typecheck && npm run typecheck:server && npm run build && npm test",
     "relay": "wrangler dev --config server/wrangler.jsonc --port 8787",
-    "relay:check": "tsc --noEmit -p server/tsconfig.json",
     "deploy": "npm run build && wrangler deploy --config server/wrangler.jsonc"
   },
   "dependencies": {

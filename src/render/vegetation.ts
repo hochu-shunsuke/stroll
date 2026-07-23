@@ -1,7 +1,14 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
-import { KIND_BROADLEAF, KIND_BUSH, KIND_PINE, KIND_ROCK } from '../world/scatter';
+import {
+  KIND_AUTUMN,
+  KIND_BROADLEAF,
+  KIND_BUSH,
+  KIND_PINE,
+  KIND_ROCK,
+  KIND_SAKURA,
+} from '../world/vegetationKinds';
 
 /** ジオメトリ全体を単色の頂点カラーで塗る（フラットシェーディング用）。 */
 function paint(geo: THREE.BufferGeometry, hex: number): THREE.BufferGeometry {
@@ -36,6 +43,16 @@ function makeBroadleaf(): THREE.BufferGeometry {
   ])!;
 }
 
+/** 広葉樹と同じ形で、葉だけ 3 色に塗った木を作る。色の宝物の森に使う。 */
+function makeTintedTree(leafA: number, leafB: number, leafC: number): THREE.BufferGeometry {
+  return mergeGeometries([
+    paint(at(new THREE.CylinderGeometry(0.2, 0.34, 3.4, 6), 1.7), TRUNK),
+    paint(at(new THREE.IcosahedronGeometry(1.95, 0), 4.6), leafA),
+    paint(at(new THREE.IcosahedronGeometry(1.45, 0), 5.6, 1.1, 0.5), leafB),
+    paint(at(new THREE.IcosahedronGeometry(1.25, 0), 4.1, -1.2, -0.7), leafC),
+  ])!;
+}
+
 function makePine(): THREE.BufferGeometry {
   return mergeGeometries([
     paint(at(new THREE.CylinderGeometry(0.16, 0.3, 2.6, 6), 1.3), TRUNK),
@@ -46,12 +63,17 @@ function makePine(): THREE.BufferGeometry {
 }
 
 function makeRock(): THREE.BufferGeometry {
-  // 正二十面体の頂点をずらして角張らせる（この形は元から非インデックス）。
+  // 正二十面体の角をずらして岩らしくする。
+  // この形は非インデックスで、同じ角が複数の頂点として重複している。
+  // 頂点番号で乱数を引くと同じ角が別々に動いて面が裂けるので、
+  // 座標から乱数を引く。同じ角は座標が一致するので、必ず一緒に動く。
   const geo = new THREE.IcosahedronGeometry(1, 0);
   const p = geo.getAttribute('position') as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {
-    const s = 0.72 + hash2(i, 3, 991) * 0.55;
-    p.setXYZ(i, p.getX(i) * s, p.getY(i) * s * 0.75, p.getZ(i) * s);
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const key = (Math.round(x * 64) * 73856093) ^ (Math.round(y * 64) * 19349663) ^ (Math.round(z * 64) * 83492791);
+    const s = 0.72 + hash2(key, 0, 991) * 0.55;
+    p.setXYZ(i, x * s, y * s * 0.75, z * s);
   }
   return paint(geo, 0x8a857a);
 }
@@ -73,6 +95,10 @@ export function vegetation() {
     geometries[KIND_PINE] = makePine();
     geometries[KIND_ROCK] = makeRock();
     geometries[KIND_BUSH] = makeBush();
+    // 秋: オレンジと金だけ。赤は目が疲れるので入れない。
+    geometries[KIND_AUTUMN] = makeTintedTree(0xc4692b, 0xd89a34, 0xcf8a2e);
+    // 桜: 淡い桃色。
+    geometries[KIND_SAKURA] = makeTintedTree(0xe6a9c4, 0xefc0d6, 0xdb96b6);
     for (const g of geometries) g.computeBoundingSphere();
     cache = {
       geometries,
