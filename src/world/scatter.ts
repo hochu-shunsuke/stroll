@@ -1,12 +1,11 @@
 import { hash2 } from '../core/rng';
 import { clamp, smoothstep } from './noise';
 import { CHUNK_SIZE } from './chunk';
+import { SPECIAL_BIOMES, type SpecialHit } from './special';
 import type { Terrain } from './terrain';
+import { KIND_BROADLEAF, KIND_BUSH, KIND_PINE, KIND_ROCK } from './vegetationKinds';
 
-export const KIND_BROADLEAF = 0;
-export const KIND_PINE = 1;
-export const KIND_ROCK = 2;
-export const KIND_BUSH = 3;
+export { KIND_BROADLEAF, KIND_BUSH, KIND_PINE, KIND_ROCK } from './vegetationKinds';
 
 export interface ScatterBatch {
   kind: number;
@@ -14,6 +13,17 @@ export interface ScatterBatch {
   matrices: Float32Array;
   /** インスタンスごとの色ムラ（3 要素 × インスタンス数）。 */
   colors: Float32Array;
+}
+
+interface PlaceContext {
+  h: number;
+  slope: number;
+  temp: number;
+  moisture: number;
+  /** その場所の宝物区画（なければ index < 0）。 */
+  special: SpecialHit;
+  /** この候補の乱数 0..1。 */
+  r: number;
 }
 
 interface KindSpec {
@@ -24,20 +34,24 @@ interface KindSpec {
   /** この LOD 以下のチャンクにだけ生やす。 */
   maxLod: number;
   /** 置くならスケールを、置かないなら 0 を返す。 */
-  place(h: number, slope: number, temp: number, moisture: number, r: number): number;
+  place(ctx: PlaceContext): number;
 }
 
-const SPECS: KindSpec[] = [
+/**
+ * 気候で決まる普通の植生。
+ * 宝物区画では木が引っ込む（宝物の木に場所を譲る）。岩だけは残す。
+ */
+const CLIMATE_SPECS: KindSpec[] = [
   {
     // 広葉樹: 温帯〜暖帯の湿った所。寒い地方と砂漠には生えない。
     kind: KIND_BROADLEAF,
     spacing: 7,
     salt: 1301,
     maxLod: 1,
-    place: (h, slope, temp, moisture, r) => {
+    place: ({ h, slope, temp, moisture, special, r }) => {
       if (h < 3.2 || h > 52 || slope > 0.42) return 0;
       const climate = smoothstep(0.34, 0.68, moisture) * band(temp, 0.4, 0.62, 0.9);
-      const density = climate * (1 - smoothstep(34, 52, h)) * 0.9;
+      const density = climate * (1 - smoothstep(34, 52, h)) * 0.9 * (1 - special.strength);
       if (r > density) return 0;
       return 0.75 + ((r * 977) % 1) * 0.6;
     },
@@ -48,21 +62,21 @@ const SPECS: KindSpec[] = [
     spacing: 8,
     salt: 4409,
     maxLod: 1,
-    place: (h, slope, temp, moisture, r) => {
+    place: ({ h, slope, temp, moisture, special, r }) => {
       if (h < 6 || h > 96 || slope > 0.5) return 0;
       const climate = smoothstep(0.22, 0.55, moisture) * band(temp, 0.12, 0.34, 0.6);
-      const density = climate * 0.85;
+      const density = climate * 0.85 * (1 - special.strength);
       if (r > density) return 0;
       return 0.8 + ((r * 613) % 1) * 0.7;
     },
   },
   {
-    // 岩: 気候によらず、急斜面と高所に転がる。
+    // 岩: 気候によらず、急斜面と高所に転がる。宝物区画でも残す。
     kind: KIND_ROCK,
     spacing: 17,
     salt: 7717,
     maxLod: 1,
-    place: (h, slope, _temp, _moisture, r) => {
+    place: ({ h, slope, r }) => {
       if (h < 1.0) return 0;
       const density = (0.12 + smoothstep(0.3, 0.7, slope) * 0.5 + smoothstep(50, 90, h) * 0.3) * 0.6;
       if (r > density) return 0;
@@ -75,15 +89,40 @@ const SPECS: KindSpec[] = [
     spacing: 5,
     salt: 2237,
     maxLod: 0,
-    place: (h, slope, temp, moisture, r) => {
+    place: ({ h, slope, temp, moisture, special, r }) => {
       if (h < 2.4 || h > 60 || slope > 0.55) return 0;
       const climate = smoothstep(0.28, 0.6, moisture) * band(temp, 0.35, 0.6, 0.92);
-      const density = climate * 0.55;
+      const density = climate * 0.55 * (1 - special.strength);
       if (r > density) return 0;
       return 0.7 + ((r * 149) % 1) * 0.9;
     },
   },
 ];
+
+/**
+ * 宝物の木。宝物区画に入っているときだけ、その区画の木を生やす。
+ * SPECIAL_BIOMES から自動で作るので、宝物を足せばここも自動で増える。
+ */
+const SPECIAL_SPECS: KindSpec[] = SPECIAL_BIOMES.flatMap((biome, index) => {
+  if (biome.treeKind === null) return [];
+  return [
+    {
+      kind: biome.treeKind,
+      spacing: biome.treeSpacing,
+      salt: 9001 + index * 13,
+      maxLod: 1,
+      place: ({ h, slope, special, r }) => {
+        // 自分の宝物区画の中だけ。強さが弱い縁ほどまばらに。
+        if (special.index !== index) return 0;
+        if (h < 1.5 || slope > 0.5) return 0;
+        if (r > biome.treeDensity * special.strength) return 0;
+        return 0.8 + ((r * 811) % 1) * 0.6;
+      },
+    },
+  ];
+});
+
+const SPECS: KindSpec[] = [...CLIMATE_SPECS, ...SPECIAL_SPECS];
 
 /**
  * 値が [lo, hi] の帯に入っているほど 1 に近づく（山なりの窓）。
@@ -163,7 +202,8 @@ export function buildScatterData(
         const moisture = terrain.moistureAt(x, z);
         const temp = terrain.temperatureAt(x, z, h);
         const slope = slopeAt(terrain, x, z, h);
-        const scale = spec.place(h, slope, temp, moisture, r);
+        const special = terrain.specialAt(x, z);
+        const scale = spec.place({ h, slope, temp, moisture, special, r });
         if (scale <= 0) continue;
 
         const yaw = hash2(gx, gz, spec.salt + 3) * Math.PI * 2;

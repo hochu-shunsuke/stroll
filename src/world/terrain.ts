@@ -1,13 +1,8 @@
 import { hashSeed } from '../core/rng';
 import { Noise2D, clamp, fbm, mix, ridged, smoothstep } from './noise';
+import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
 
 export const SEA_LEVEL = 0;
-
-/** sRGB の 16 進を three の作業色空間（リニア）へ。 */
-function srgb(hex: number): [number, number, number] {
-  const f = (v: number) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-  return [f(((hex >> 16) & 255) / 255), f(((hex >> 8) & 255) / 255), f((hex & 255) / 255)];
-}
 
 // 落ち着いた、彩度を抑えた自然の色。
 const C_SEABED = srgb(0x4d5a52);
@@ -60,6 +55,8 @@ export class Terrain {
   private nLake: Noise2D;
   private nMoisture: Noise2D;
   private nTemperature: Noise2D;
+  private nSpecialEdge: Noise2D;
+  private specialSalt: number;
 
   constructor(seed: string) {
     this.seed = seed;
@@ -72,6 +69,14 @@ export class Terrain {
     this.nLake = new Noise2D((b ^ 0x85ebca6b) >>> 0);
     this.nMoisture = new Noise2D((c ^ 0xc2b2ae35) >>> 0);
     this.nTemperature = new Noise2D((d ^ 0x27d4eb2f) >>> 0);
+    this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
+    // 宝物の抽選にシードを混ぜる種。これがないと全世界で宝物の位置が同じになる。
+    this.specialSalt = (b ^ 0x9e3779b1) >>> 0;
+  }
+
+  /** 宝物区画の判定。詳しくは special.ts。 */
+  specialAt(x: number, z: number): SpecialHit {
+    return specialAt(x, z, this.nSpecialEdge, this.specialSalt);
   }
 
   /** 陸らしさ 0..1。島と外洋の骨格。 */
@@ -157,7 +162,15 @@ export class Terrain {
    * 面の色。気温 × 湿り気で気候帯が決まり、そこへ標高・傾きの効果を重ねる。
    * out に 0..1 のリニア RGB を書き込む。
    */
-  shade(h: number, slope: number, temp: number, moisture: number, out: Float32Array, o: number): void {
+  shade(
+    h: number,
+    slope: number,
+    temp: number,
+    moisture: number,
+    special: SpecialHit,
+    out: Float32Array,
+    o: number,
+  ): void {
     // 岩肌: 急斜面ほど、そして高所ほど土が乗らない。
     const rocky = clamp(
       smoothstep(0.42, 0.72, slope) + smoothstep(52, 88, h) * 0.75,
@@ -172,6 +185,15 @@ export class Terrain {
     let r = mix(DRY[0], WET[0], wetness);
     let g = mix(DRY[1], WET[1], wetness);
     let b = mix(DRY[2], WET[2], wetness);
+
+    // 宝物区画: 気候の地面色を宝物の色で上書きする。
+    // 浜辺・水中・岩・雪より前に混ぜるので、宝物の中でも崖や水際は自然に残る。
+    if (special.index >= 0) {
+      const sp = SPECIAL_BIOMES[special.index].ground;
+      r = mix(r, sp[0], special.strength);
+      g = mix(g, sp[1], special.strength);
+      b = mix(b, sp[2], special.strength);
+    }
 
     // 浜辺: どの気候でも水際は砂に寄る。
     const beach = 1 - smoothstep(1.2, 4.5, h);

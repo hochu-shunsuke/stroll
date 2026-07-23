@@ -1,0 +1,21 @@
+name: CI
+
+# push と PR のたびに、型・ビルド・単体テストを回す。
+# 中継サーバ相手のプロトコルテストはネットワークに依存するのでここには入れない
+# （ローカルで npm run relay を立てて別途確認する）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run ci

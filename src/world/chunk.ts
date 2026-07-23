@@ -1,4 +1,5 @@
 import { hash2 } from '../core/rng';
+import type { SpecialHit } from './special';
 import type { Terrain } from './terrain';
 
 /** 1 チャンクの一辺（ワールド単位 ≒ メートル）。 */
@@ -90,12 +91,13 @@ export function buildChunkArrays(
       const cz = oz + z0 + step * 0.5;
       const moisture = terrain.moistureAt(cx, cz);
       const temp = terrain.temperatureAt(cx, cz, (h00 + h11) * 0.5);
+      const special = terrain.specialAt(cx, cz);
 
       // heightOnGrid の三角形分割と必ず同じ切り方にすること（足元が浮かないため）。
-      shadeTri(terrain, h00, h01, h11, step, temp, moisture, i, j, 0, faceColor);
+      shadeTri(terrain, h00, h01, h11, step, temp, moisture, special, i, j, 0, faceColor);
       tri(x0, h00, z0, x0, h01, z1, x1, h11, z1, faceColor[0], faceColor[1], faceColor[2]);
 
-      shadeTri(terrain, h00, h11, h10, step, temp, moisture, i, j, 1, faceColor);
+      shadeTri(terrain, h00, h11, h10, step, temp, moisture, special, i, j, 1, faceColor);
       tri(x0, h00, z0, x1, h11, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
     }
   }
@@ -137,6 +139,7 @@ function shadeTri(
   step: number,
   temp: number,
   moisture: number,
+  special: SpecialHit,
   i: number,
   j: number,
   which: number,
@@ -146,7 +149,7 @@ function shadeTri(
   // 三角形内の高低差を水平方向の広がりで割ると、傾きの目安になる。
   const spread = Math.max(Math.abs(ha - hb), Math.abs(hb - hc), Math.abs(ha - hc));
   const slope = Math.min(1, spread / (step * 1.4142));
-  terrain.shade(h, slope, temp, moisture, out, 0);
+  terrain.shade(h, slope, temp, moisture, special, out, 0);
 
   // 面ごとにわずかな明暗を与え、ローポリの一枚一枚が見えるようにする。
   const t = 0.94 + hash2(i, j * 2 + which, 7717) * 0.12;
