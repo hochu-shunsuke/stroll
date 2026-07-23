@@ -111,30 +111,31 @@ export class Room {
       me.state = cleanState(msg.s);
       ws.serializeAttachment(me);
 
-      // 再接続の後始末。同じブラウザ（cid）の古い接続がまだ残っていたら、
-      // それが「自分の死体」として見えるので、ここで閉じて他人にも退場を伝える。
-      // close は遅れて届くことがあるため、下の others でも cid で弾く。
-      if (me.cid) {
-        for (const other of this.state.getWebSockets()) {
-          if (other === ws) continue;
-          const a = other.deserializeAttachment() as Attachment | null;
-          if (a && a.cid === me.cid) {
-            try {
-              other.close(1000, 'replaced');
-            } catch {
-              // 既に閉じかけていれば無視。
-            }
+      // 同じブラウザの古い接続か。cid が空（cid を送らない古い版）は
+      // 別人として扱う。空同士を「同じ」と見なすと、他人が消えてしまう。
+      const isOldSelf = (a: Attachment | null): boolean =>
+        a !== null && me.cid !== '' && a.cid === me.cid;
+
+      // 再接続の後始末。古い自分がまだ残っていたら閉じ、他人にも退場を伝える。
+      // close は遅れて届くことがあるため、下の others でも弾く。
+      for (const other of this.state.getWebSockets()) {
+        if (other === ws) continue;
+        if (isOldSelf(other.deserializeAttachment() as Attachment | null)) {
+          try {
+            other.close(1000, 'replaced');
+          } catch {
+            // 既に閉じかけていれば無視。
           }
         }
       }
 
       // join と同じ形（id / name / s）で返す。受け手が場合分けせずに済むように。
-      // 同じ cid（＝古い自分）は必ず除く。close の遅延に関係なく死体を出さない。
+      // 古い自分（＝同じ cid）は必ず除く。close の遅延に関係なく死体を出さない。
       const others: { id: string; name: string; s: PlayerState | null }[] = [];
       for (const other of this.state.getWebSockets()) {
         if (other === ws) continue;
         const a = other.deserializeAttachment() as Attachment | null;
-        if (a?.name && a.cid !== me.cid) others.push({ id: a.id, name: a.name, s: a.state });
+        if (a?.name && !isOldSelf(a)) others.push({ id: a.id, name: a.name, s: a.state });
       }
       ws.send(JSON.stringify({ t: 'welcome', id: me.id, players: others }));
       this.broadcast(ws, { t: 'join', id: me.id, name: me.name, s: me.state });
