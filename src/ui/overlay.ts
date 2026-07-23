@@ -152,7 +152,7 @@ export class Overlay {
     const url = `${location.origin}${location.pathname}#${this.seed}`;
     try {
       await navigator.clipboard.writeText(url);
-      this.flash('URLをコピーしました。同じ地形が開きます。');
+      this.flash('リンクをコピーしました。友達と同じ世界を歩けます。');
     } catch {
       this.flash(url);
     }

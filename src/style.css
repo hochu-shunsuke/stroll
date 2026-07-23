@@ -12,6 +12,7 @@ html,
 body {
   margin: 0;
   height: 100%;
+  width: 100%;
   overflow: hidden;
   /* 指で操作するので、引っぱって更新・つまんで拡大・端の跳ね返りを全部止める。 */
   overscroll-behavior: none;
@@ -36,14 +37,19 @@ body {
 #ui {
   position: fixed;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
 .veil {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-content: safe center;
+  /* flex + auto margin なら、中身が縦に収まっても中央、はみ出しても切れない。
+     grid の safe center は縦に収まると左上へ寄ってしまい、カードが端に付いた。 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: hidden;
   overflow-y: auto;
   /* 横は常に最低 24px の余白。スマホで端に張り付かせない。 */
   padding:
@@ -61,6 +67,8 @@ body {
 }
 
 .card {
+  /* 上下中央へ。中身が背より高いときは margin が潰れ、自然に上から流れる。 */
+  margin: auto 0;
   width: min(360px, 100%);
   display: flex;
   flex-direction: column;
@@ -466,6 +474,8 @@ kbd {
   left: 50%;
   bottom: 42px;
   transform: translate(-50%, 8px);
+  max-width: min(90vw, 360px);
+  text-align: center;
   padding: 9px 16px;
   border-radius: 999px;
   font-size: 12px;
