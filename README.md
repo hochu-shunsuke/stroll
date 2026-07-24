@@ -26,10 +26,25 @@ npm install
 npm run dev      # http://localhost:5173（LAN 公開。スマホからも見られる）
 npm run relay    # 別のターミナルで。マルチプレイの中継サーバ
 npm run ci       # 型・ビルド・テスト（push 前に通す）
-npm run deploy   # ビルドして Cloudflare へ。本体と中継を同時に配る
+npm run deploy   # 手元から Cloudflare へ出す（通常は不要。下記 CD が出す）
 ```
 
 `npm run relay` を動かさなくても 1 人で歩ける。
+
+## デプロイ
+
+**main に入ったものが、検証を通ったときだけ自動で本番へ出る。**
+
+```
+PR           → 型・ビルド・テスト（.github/workflows/ci.yml）
+main へ push → 同じ検証 → 通ったときだけ Cloudflare へ（deploy.yml）
+```
+
+Cloudflare 側の Git 連携は**使わない**。あれは検証のゲートが無く、CI が落ちても
+本番に出てしまうため。デプロイの条件と環境はワークフローに書いてある。
+
+fork する場合は Secrets に `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_ID` を
+登録し、`server/wrangler.jsonc` の `name` を自分のものに変える。
 
 ## 設計の芯
 

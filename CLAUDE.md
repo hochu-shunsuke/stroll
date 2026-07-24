@@ -85,13 +85,38 @@ npm test         # seed の単体テストだけ
 npm run deploy   # ビルドして Cloudflare へ。本体と中継が同時に出る
 ```
 
-push / PR では GitHub Actions（`.github/workflows/ci.yml`）が `npm run ci` を回す。
-中継サーバ相手のプロトコル確認はネットワーク依存なので CI に入れていない
-（`scripts/`相当は無し。手元で `npm run relay` を立てて別途叩く）。
+## CI / CD
+
+デプロイは **GitHub Actions が唯一の経路**。手元から `npm run deploy` も打てるが、
+通常は main に入れれば自動で出る。
+
+```
+PR           → ci.yml        : npm run ci（型・ビルド・テスト）だけ。出さない
+main へ push → deploy.yml    : verify → 通ったときだけ deploy
+                                └ 落ちたらここで止まる ＝ 壊れたものは本番に出ない
+手動          → Actions 画面から deploy.yml を workflow_dispatch で実行
+```
+
+**Cloudflare 側の Git 連携は使わない（切ってある）。** 理由が 2 つある。
+
+1. あの連携には**検証のゲートが無い**。CI が落ちていても main に入った瞬間に出る
+2. デプロイの仕組みが**ダッシュボードの中にしか無く**、リポジトリを見ても分からない
+
+もし将来ダッシュボードで再接続すると、Actions と二重にデプロイが走り、
+古いビルドが新しいビルドを後から上書きしうる。**再接続しないこと。**
+
+必要な Secrets（GitHub のリポジトリ設定に登録済み）:
+`CLOUDFLARE_API_TOKEN`（Edit Cloudflare Workers テンプレートで発行）、
+`CLOUDFLARE_ACCOUNT_ID`。
+
+`concurrency: deploy` で同時実行を止めている。連続 push でも順番に出る。
+
+中継サーバ相手のプロトコル確認はネットワーク依存なので CI に入れていない。
+手元で `npm run relay` を立てて別途叩く。
 
 ## branch を切って進めた方がよい変更
 
 見た目や地形を大きく触るときは branch を切り、まず `npm run dev` の
-LAN URL でスマホ確認 → 良ければ `npm run ci` を通して `--no-ff` で main へ。
-プレビューを公開 URL で見たいときは Cloudflare の Preview URLs を一度
-ダッシュボードで有効化する（未設定なので今は出せない）。
+LAN URL でスマホ確認 → PR にすれば ci.yml が検証する → main へ merge すれば
+自動でデプロイされる。プレビューを公開 URL で見たいときは Cloudflare の
+Preview URLs を一度ダッシュボードで有効化する（未設定なので今は出せない）。
