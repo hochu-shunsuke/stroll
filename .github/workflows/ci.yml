@@ -1,11 +1,12 @@
 name: CI
 
-# push と PR のたびに、型・ビルド・単体テストを回す。
+# PR で、型・ビルド・単体テストを回す。
+# main への push では deploy.yml の verify ジョブが同じ検証をするので、
+# ここでは走らせない（二重に回さない）。
+#
 # 中継サーバ相手のプロトコルテストはネットワークに依存するのでここには入れない
 # （ローカルで npm run relay を立てて別途確認する）。
 on:
-  push:
-    branches: [main]
   pull_request:
 
 jobs:
