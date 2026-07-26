@@ -1,8 +1,31 @@
 import { hashSeed } from '../core/rng';
+import { EDGE_WIDTH, EDGE_WOBBLE_RATE, LF_PLATEAU, landformAt } from './landform';
 import { Noise2D, clamp, fbm, mix, ridged, smoothstep } from './noise';
 import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
 
 export const SEA_LEVEL = 0;
+
+// 台地が周りの地面から持ち上がる高さ（メートル）。区画ごとにこの範囲で変わる。
+// 陸の標高は中央値 8m・88% が 20m 以下なので、この高さで「見下ろす場所」になる。
+const PLATEAU_RISE_MIN = 22;
+const PLATEAU_RISE_MAX = 38;
+
+/**
+ * 台地の縁の、いちばん急なところの傾き。
+ *
+ * 縁は landform.ts の EDGE_WIDTH の帯の中で smoothstep で落ちる。
+ * smoothstep の最大傾斜は平均の 1.5 倍。さらに縁の位置そのものが歩くにつれて
+ * ずれるので、そのぶん急になる（EDGE_WOBBLE_RATE）。
+ *
+ * **この 2 つ目の項を忘れて一度壊した。** 見積もりでは 1.05 だったが実測の
+ * 最大は 4.84 で、縁の 27% が歩いて登れない台地になっていた。
+ *
+ * player 側の登坂限界（MAX_CLIMB）より急いと、歩いて台地に上がれなくなる。
+ * その突き合わせは controller.ts で行う（MAX_CLIMB をここに書き写すと、
+ * 同じ定数が 2 か所に散って片方だけ変わる事故になるため）。
+ */
+export const STEEPEST_LANDFORM_SLOPE =
+  ((1.5 * PLATEAU_RISE_MAX) / EDGE_WIDTH) * (1 + EDGE_WOBBLE_RATE);
 
 // 落ち着いた、彩度を抑えた自然の色。
 const C_SEABED = srgb(0x4d5a52);
@@ -57,6 +80,8 @@ export class Terrain {
   private nTemperature: Noise2D;
   private nSpecialEdge: Noise2D;
   private specialSalt: number;
+  private nLandformEdge: Noise2D;
+  private landformSalt: number;
 
   constructor(seed: string) {
     this.seed = seed;
@@ -72,6 +97,9 @@ export class Terrain {
     this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
     // 宝物の抽選にシードを混ぜる種。これがないと全世界で宝物の位置が同じになる。
     this.specialSalt = (b ^ 0x9e3779b1) >>> 0;
+    this.nLandformEdge = new Noise2D((c ^ 0x7feb352d) >>> 0);
+    // 地形の種類の抽選にも同じくシードを混ぜる。
+    this.landformSalt = (d ^ 0x846ca68b) >>> 0;
   }
 
   /** 宝物区画の判定。詳しくは special.ts。 */
@@ -111,7 +139,8 @@ export class Terrain {
 
   /**
    * 標高。海面は 0。
-   * 大陸 → 侵食（平原か山か） → 尾根 → 丘 → 細部 → 湖のくぼみ、の順に積む。
+   * 大陸 → 侵食（平原か山か） → 尾根 → 丘 → 細部 → 湖のくぼみ、の順に積み、
+   * 最後にその場所の地形の種類（landform.ts）で上書きする。
    */
   heightAt(x: number, z: number): number {
     const land = this.landAt(x, z);
@@ -135,7 +164,21 @@ export class Terrain {
     const lakeMask = smoothstep(0.63, 0.88, lk) * flat * land;
     const lake = lakeMask * 22;
 
-    return base + mountain + hill + detail - lake;
+    const plain = base + mountain + hill + detail - lake;
+
+    // 地形の種類。ほとんどの場所は「ふつうの地形」で、ここで終わる。
+    // 種類ごとの高さは 1 つしか評価しない（landform.ts の予算の注意を参照）。
+    const lf = landformAt(x, z, land, this.nLandformEdge, this.landformSalt);
+    if (lf.index !== LF_PLATEAU) return plain;
+
+    // 台地。天面の基準に base（大陸ノイズ由来、波長 2900m）を使うのが要点。
+    // 台地の差し渡し 600〜900m の中では base はほとんど変わらないので、天面が平らになる。
+    // ここで plain を基準にすると下の尾根や丘がそのまま天面に出て、
+    // 「持ち上げただけの山」に戻る＝高くて平らな場所ができない。
+    const rise = mix(PLATEAU_RISE_MIN, PLATEAU_RISE_MAX, lf.variant);
+    // 天面は真っ平らだと作り物に見えるので、丘を薄めて残す。
+    const top = base + rise + hill * 0.22 + detail;
+    return mix(plain, top, lf.strength);
   }
 
   /**

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LOD_STEPS } from '../world/chunk';
-import { SEA_LEVEL, type Terrain } from '../world/terrain';
+import { SEA_LEVEL, STEEPEST_LANDFORM_SLOPE, type Terrain } from '../world/terrain';
 
 /**
  * 目線の高さ。通信で送る y はこの高さの値なので、
@@ -15,6 +15,16 @@ const GRAVITY = 26;
 const JUMP_SPEED = 7.2;
 /** 這い上がれる斜面の限界。水平 1 進む間に登れる高さ。 */
 const MAX_CLIMB = 1.15;
+
+// 台地の縁がこれより急だと、歩いて上に行けない台地ができる。
+// 突き合わせを player 側に置いているのは、MAX_CLIMB を world 側に書き写すと
+// 同じ定数が 2 か所に散り、片方だけ変えたときに型検査を通って壊れるため。
+if (STEEPEST_LANDFORM_SLOPE > MAX_CLIMB) {
+  throw new Error(
+    '台地の縁が MAX_CLIMB より急です。' +
+      'terrain.ts の PLATEAU_RISE_MAX を下げるか landform.ts の EDGE_WIDTH を広げてください',
+  );
+}
 /** 泳ぎに切り替わる水深。 */
 const SWIM_DEPTH = 1.3;
 /** 二度押しと見なす間隔（ミリ秒）。 */
