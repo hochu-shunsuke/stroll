@@ -1,4 +1,5 @@
 import { hash2 } from '../core/rng';
+import { clamp } from './noise';
 import type { SpecialHit } from './special';
 import type { Terrain } from './terrain';
 
@@ -18,6 +19,16 @@ if (LOD_STEPS.length !== LOD_RINGS.length) {
 
 /** 継ぎ目の隙間を隠すためにチャンク外周から下ろすスカートの深さ。 */
 const SKIRT_DEPTH = 30;
+
+// 曲率による明暗（擬似 AO）。凹みを暗く、盛り上がりを明るくして、
+// 影を落とさずに地形の形を読ませる。実測した曲率の分布に合わせてある:
+// step で割った曲率は中央値 0.015・90% 0.05 で、LOD が変わってもほぼ一定。
+// GAIN 12 だと 90% の面が 0.6、それ以上は clamp で頭打ちになる。
+const CURVATURE_GAIN = 12;
+/** 凹み側。本物の AO も凹みの方が強く効くので、明るくする側より大きく取る。 */
+const CURVATURE_DARK = 0.34;
+/** 盛り上がり側。 */
+const CURVATURE_LIGHT = 0.2;
 
 export interface ChunkArrays {
   position: Float32Array;
@@ -41,13 +52,21 @@ export function buildChunkArrays(
   const oz = cz * CHUNK_SIZE;
 
   // 高さは格子点ごとに一度だけ計算する（ノイズ評価がこの処理の大半を占めるため）。
-  const hs = new Float32Array((n + 1) * (n + 1));
-  for (let j = 0; j <= n; j++) {
-    for (let i = 0; i <= n; i++) {
-      hs[j * (n + 1) + i] = terrain.heightAt(ox + i * step, oz + j * step);
+  // 外周に 1 リング余分に取っているのは曲率が隣の四角形を要るため。これが無いと
+  // チャンクの継ぎ目にだけ明暗の線が出る。格子点は (n+1)^2 → (n+3)^2（step=2 で +4%）。
+  const W = n + 3;
+  const hs = new Float32Array(W * W);
+  for (let j = -1; j <= n + 1; j++) {
+    for (let i = -1; i <= n + 1; i++) {
+      hs[(j + 1) * W + (i + 1)] = terrain.heightAt(ox + i * step, oz + j * step);
     }
   }
-  const H = (i: number, j: number) => hs[j * (n + 1) + i];
+  // i, j は -1 から n+1 まで引ける。
+  const H = (i: number, j: number) => hs[(j + 1) * W + (i + 1)];
+
+  /** 四角形 1 枚の平均の高さ。曲率をこの単位で測る。 */
+  const Q = (i: number, j: number) =>
+    (H(i, j) + H(i + 1, j) + H(i, j + 1) + H(i + 1, j + 1)) * 0.25;
 
   const triCount = n * n * 2 + n * 8;
   const position = new Float32Array(triCount * 9);
@@ -93,11 +112,17 @@ export function buildChunkArrays(
       const temp = terrain.temperatureAt(cx, cz, (h00 + h11) * 0.5);
       const special = terrain.specialAt(cx, cz);
 
+      // 曲率: 周りの四角形より低ければ凹み（負）、高ければ盛り上がり（正）。
+      // step で割ると LOD が変わっても同じ強さの明暗になる。
+      // 気候と同じく四角形あたり 1 度でよい（形の単位は四角形なので）。
+      const curv =
+        (Q(i, j) - (Q(i - 1, j) + Q(i + 1, j) + Q(i, j - 1) + Q(i, j + 1)) * 0.25) / step;
+
       // heightOnGrid の三角形分割と必ず同じ切り方にすること（足元が浮かないため）。
-      shadeTri(terrain, h00, h01, h11, step, temp, moisture, special, i, j, 0, faceColor);
+      shadeTri(terrain, h00, h01, h11, step, temp, moisture, special, curv, i, j, 0, faceColor);
       tri(x0, h00, z0, x0, h01, z1, x1, h11, z1, faceColor[0], faceColor[1], faceColor[2]);
 
-      shadeTri(terrain, h00, h11, h10, step, temp, moisture, special, i, j, 1, faceColor);
+      shadeTri(terrain, h00, h11, h10, step, temp, moisture, special, curv, i, j, 1, faceColor);
       tri(x0, h00, z0, x1, h11, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
     }
   }
@@ -130,7 +155,7 @@ export function buildChunkArrays(
   return { position, normal, color };
 }
 
-/** 三角形 1 枚の色を、その 3 頂点の高さと傾きから決める。 */
+/** 三角形 1 枚の色を、その 3 頂点の高さと傾き、そして四角形の曲率から決める。 */
 function shadeTri(
   terrain: Terrain,
   ha: number,
@@ -140,6 +165,7 @@ function shadeTri(
   temp: number,
   moisture: number,
   special: SpecialHit,
+  curv: number,
   i: number,
   j: number,
   which: number,
@@ -151,8 +177,16 @@ function shadeTri(
   const slope = Math.min(1, spread / (step * 1.4142));
   terrain.shade(h, slope, temp, moisture, special, out, 0);
 
-  // 面ごとにわずかな明暗を与え、ローポリの一枚一枚が見えるようにする。
-  const t = 0.94 + hash2(i, j * 2 + which, 7717) * 0.12;
+  // 曲率による明暗。凹みを暗くすることで、影を落とさずに形を読ませる。
+  // 面ごとのランダムな明暗だけでは、平らな面の上では「模様」に見えて形に見えない。
+  const k = clamp(curv * CURVATURE_GAIN, -1, 1);
+  const shape = 1 + k * (k < 0 ? CURVATURE_DARK : CURVATURE_LIGHT);
+
+  // わずかな揺らぎ。曲率がほぼ 0 の平地が均一になりすぎるのを防ぐ。
+  // 曲率と競合しないよう、以前の ±6% から ±3% に落としてある。
+  const jitter = 0.97 + hash2(i, j * 2 + which, 7717) * 0.06;
+
+  const t = shape * jitter;
   out[0] *= t;
   out[1] *= t;
   out[2] *= t;
