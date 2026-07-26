@@ -1,6 +1,6 @@
 import { hashSeed } from '../core/rng';
 import { EDGE_WIDTH, EDGE_WOBBLE_RATE, LF_PLATEAU, landformAt } from './landform';
-import { Noise2D, clamp, fbm, mix, ridged, smoothstep } from './noise';
+import { Noise2D, clamp, fbm, fbmEroded, mix, smoothstep, spline } from './noise';
 import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
 
 export const SEA_LEVEL = 0;
@@ -26,6 +26,143 @@ const PLATEAU_RISE_MAX = 38;
  */
 export const STEEPEST_LANDFORM_SLOPE =
   ((1.5 * PLATEAU_RISE_MAX) / EDGE_WIDTH) * (1 + EDGE_WOBBLE_RATE);
+
+// ---------------------------------------------------------------------------
+// 高さを決めるスプライン
+//
+// 折れ点が地形の種類を作る。**平らな区間が平原と台地を、急な区間が崖と海岸線を
+// 作る。** 掛け算では段を作れないので、ここが「大枠から出る」ための要になる。
+//
+// つまみ方の勘所:
+//  - 2 つの折れ点を近づけるほど、そこが崖になる
+//  - 出力が同じ値で並ぶ区間を作ると、そこが広い平地になる
+//  - 海の割合は SP_BASE がゼロを跨ぐ入力値で決まる
+// ---------------------------------------------------------------------------
+
+/** 大陸度 → 基準の高さ（m）。外洋から奥地まで。 */
+const SP_BASE: readonly (readonly [number, number])[] = [
+  [-1.0, -58],
+  [-0.42, -30],
+  [-0.16, -7],
+  [-0.05, 3], // 渚。ここが急 ＝ 海岸線がはっきり出る
+  [0.04, 10],
+  [0.24, 16], // 広い低地。ここが平ら ＝ 平原が広がる
+  [0.36, 64], // 内陸の段。ここが急 ＝ 断崖と台地の縁
+  [0.58, 88],
+  [1.0, 142],
+];
+
+/**
+ * 侵食度 → 起伏の振れ幅（m）。高いほど平ら。
+ *
+ * 平らになる側の折れ点を低めに置いてある。侵食度は正規分布に近いので、
+ * 折れ点を 0.34 に置くと平原が全体の 1 割ほどしか出ず、歩ける平地が消える
+ * （一度これで平原が 36% → 8% に落ちた）。
+ */
+const SP_RELIEF: readonly (readonly [number, number])[] = [
+  [-1.0, 104],
+  [-0.55, 68],
+  [-0.28, 38],
+  [-0.06, 13],
+  [0.12, 5], // ここから先が平ら ＝ どこまでも続く平原
+  [1.0, 4],
+];
+
+/**
+ * 尾根と谷 → 起伏の中での高さの割合。
+ *
+ * **谷底側に平らな区間を置いているのが要点。** ここが「歩く場所」になる。
+ *
+ * 以前は `pv * relief * 0.5` と直に掛けていた。すると谷が V 字に尖り、
+ * 歩ける床が無くなる。実測でまっすぐ歩くと中央値 104m（19 秒）で壁に当たり、
+ * 29% は 50m 未満で行き止まりだった。散歩ではなく障害物競走になっていた。
+ *
+ * pv は w（ねじれ）が 0 のところで最小になる。w = 0 は等高線なので
+ * **谷底はもともと連結したネットワーク**になっている。そこを平らにすると、
+ * 山の間を縫って歩ける道が自然にできる。川を入れるならこの同じ場所。
+ */
+const SP_PV: readonly (readonly [number, number])[] = [
+  [-1.0, -0.34],
+  [-0.58, -0.34], // ここが平ら ＝ 谷底の床。歩ける回廊になる
+  [-0.22, -0.17],
+  [0.3, 0.2],
+  [1.0, 0.52],
+];
+
+/**
+ * 大陸度 → 起伏の効き方。
+ *
+ * **「歩く場所」と「見る場所」を分けるのがこのスプラインの仕事。**
+ *
+ * 低地（大陸度 0.0〜0.25、標高 10〜16m の広い平原）では起伏を抑える。ここは
+ * 歩く場所なので、傾きが上がると散歩にならない。内陸（0.38 以上）で一気に上げて、
+ * そこを見る場所にする。平原に立って山を眺める、という関係がこれで生まれる。
+ *
+ * 一度これを一様に上げて失敗した。歩く面の傾きが中央 0.12 → 0.24 に倍増し、
+ * まっすぐ歩くと 104m（19 秒）で壁に当たるようになった。連結性は 94〜99% あって
+ * どこへでも行けたのに、**ずっと登り降りさせられる**ので散歩にならなかった。
+ *
+ * 外洋側を低くしているのは、海底に山を作らないため。
+ */
+const SP_RELIEF_GATE: readonly (readonly [number, number])[] = [
+  [-1.0, 0.1],
+  [-0.2, 0.2],
+  [0.0, 0.3],
+  [0.22, 0.44], // 低地 ＝ 歩く場所。起伏を抑える
+  [0.38, 1.0], // 内陸 ＝ 見る場所。ここから一気に上げる
+  [1.0, 1.0],
+];
+
+/**
+ * 四角形をどちらの対角線で 2 つの三角形に割るか。true なら h00-h11。
+ *
+ * **チャンクのメッシュ（chunk.ts）と heightOnGrid は必ずこの同じ関数を使うこと。**
+ * 片方だけ変えると足元が地面から浮く。以前は両方が「常に h00-h11」と
+ * ベタ書きで揃えていたが、機構では守られていなかった。ここに 1 つ置いて共有する。
+ *
+ * 常に同じ向きで割ると、対角線に垂直な向きに系統的な畝ができる（＝斜めの縞）。
+ * 実測では step=48 で最大 10.8m の段差になり、遠景の山肌に縞として見えていた。
+ *
+ * 高低差が小さい方の対角線を選ぶと、割る向きが地形に従うので方向の偏りが消え、
+ * 中央での誤差も 2 割減る（step=48 で 1.96m → 1.50m）。
+ */
+export function splitsAlongMainDiagonal(
+  h00: number,
+  h10: number,
+  h01: number,
+  h11: number,
+): boolean {
+  return Math.abs(h00 - h11) <= Math.abs(h01 - h10);
+}
+
+/**
+ * 尾根と谷。ねじれノイズを折り返して作る。
+ * 戻り値は -1（谷底）〜 +1（稜線）。
+ *
+ * 折り返すのが要点。ふつうのノイズは丸い塊になるが、折り返すと
+ * **尾根と谷が交互に並ぶ**構造になる。視界を切る中スケールの起伏はここから出る。
+ * w が 0 に近いところが谷筋なので、川を入れるならそこになる。
+ */
+function peaksValleys(w: number): number {
+  return 1 - Math.abs(3 * Math.abs(w) - 2);
+}
+
+/**
+ * 座標のゆがめ方。
+ *
+ * **効くのは振幅ではなく「1m 動く間に座標が何 m ずれるか」（勾配）。**
+ * 勾配は `WARP_AMOUNT × WARP_FREQ × ノイズの傾き(≒2.5)` で決まる。
+ * これが 1.0 を超えると座標が折り返し、**地形が自分自身に重なる**。
+ * 見た目は指紋のような渦になる。
+ *
+ * 一度 0.0016 / 190 にして壊した。勾配が 16% の場所で 1.0 を超え、
+ * 山肌に渦模様が出ていた。
+ *
+ * 振幅は保ったまま波長を伸ばしてある。細かく歪めると指紋になるが、
+ * 大きくゆっくり歪めると大地の褶曲のように見える。
+ */
+const WARP_FREQ = 0.0007;
+const WARP_AMOUNT = 170;
 
 // 落ち着いた、彩度を抑えた自然の色。
 const C_SEABED = srgb(0x4d5a52);
@@ -73,9 +210,8 @@ export class Terrain {
   private nContinent: Noise2D;
   private nErosion: Noise2D;
   private nRidge: Noise2D;
-  private nHill: Noise2D;
   private nDetail: Noise2D;
-  private nLake: Noise2D;
+  private nWarp: Noise2D;
   private nMoisture: Noise2D;
   private nTemperature: Noise2D;
   private nSpecialEdge: Noise2D;
@@ -89,9 +225,8 @@ export class Terrain {
     this.nContinent = new Noise2D(a);
     this.nErosion = new Noise2D(b);
     this.nRidge = new Noise2D(c);
-    this.nHill = new Noise2D(d);
     this.nDetail = new Noise2D((a ^ 0x9e3779b9) >>> 0);
-    this.nLake = new Noise2D((b ^ 0x85ebca6b) >>> 0);
+    this.nWarp = new Noise2D(d);
     this.nMoisture = new Noise2D((c ^ 0xc2b2ae35) >>> 0);
     this.nTemperature = new Noise2D((d ^ 0x27d4eb2f) >>> 0);
     this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
@@ -107,16 +242,34 @@ export class Terrain {
     return specialAt(x, z, this.nSpecialEdge, this.specialSalt);
   }
 
-  /** 陸らしさ 0..1。島と外洋の骨格。 */
-  private landAt(x: number, z: number): number {
-    const c = fbm(this.nContinent, x, z, 5, 0.00035);
-    return smoothstep(-0.06, 0.26, c);
+  /**
+   * 大陸度。低いほど外洋、高いほど奥地。海と陸を分ける軸。
+   * ここだけは座標をゆがめない（海岸線の形が壊れるため）。
+   */
+  private continentalnessAt(x: number, z: number): number {
+    return fbm(this.nContinent, x, z, 5, 0.00035);
   }
 
-  /** 平坦さ 0..1。低いほど山がちになる。 */
-  private flatnessAt(x: number, z: number): number {
-    const e = fbm(this.nErosion, x, z, 3, 0.0007) * 0.5 + 0.5;
-    return smoothstep(0.18, 0.74, e);
+  /**
+   * 侵食度。高いほど平ら、低いほど険しい。「どんな起伏か」を決める軸。
+   *
+   * 周波数は「平地と山地が入れ替わる間隔」。0.00065（波長 1540m）だと
+   * 平原の真ん中に立ったとき山が遠すぎて、視界を切るものが何も無かった。
+   * 0.0011（波長 900m）にすると、平地にいても山が視界に入る。
+   */
+  private erosionAt(x: number, z: number): number {
+    return fbm(this.nErosion, x, z, 4, 0.0011);
+  }
+
+  /**
+   * ねじれ。折り返して尾根と谷にする。0 に近いところが谷筋。
+   *
+   * 周波数がそのまま「尾根と谷が入れ替わる間隔」になり、視界を切る壁の
+   * 大きさを決める。0.0013（波長 770m）では緩すぎて壁にならなかった。
+   * 0.0028 なら波長 357m、半波長 180m で起伏ぶん上下するので壁になる。
+   */
+  private weirdnessAt(x: number, z: number): number {
+    return fbm(this.nRidge, x, z, 4, 0.0028);
   }
 
   moistureAt(x: number, z: number): number {
@@ -139,46 +292,61 @@ export class Terrain {
 
   /**
    * 標高。海面は 0。
-   * 大陸 → 侵食（平原か山か） → 尾根 → 丘 → 細部 → 湖のくぼみ、の順に積み、
-   * 最後にその場所の地形の種類（landform.ts）で上書きする。
+   *
+   * ノイズを足し合わせるのではなく、**3 つのパラメータをスプラインに通す**。
+   *
+   *   大陸度 → 基準の高さ（外洋 / 渚 / 低地 / 内陸の段 / 奥地）
+   *   侵食度 → 起伏の振れ幅（険しい山 〜 真っ平らな平原）
+   *   ねじれ → 折り返して尾根と谷にする
+   *
+   * 以前は `ridged^1.9 × (1-flat)^1.5 × land^1.6 × 135` のように掛け算していた。
+   * なめらかな関数の掛け算は必ずなめらかで単峰になるので、作れるのは
+   * 「山が多いか少ないか」の度合いだけ。「ここから先は台地」という段を作れない。
+   * これが「海の中に平らな島がある」以外の景色を作れなかった原因だった。
    */
   heightAt(x: number, z: number): number {
-    const land = this.landAt(x, z);
-    const flat = this.flatnessAt(x, z);
+    // 座標をゆがめる（domain warping）。
+    // ノイズが等方のままだと、何を重ねても丸い塊にしかならない。
+    // ゆがめると谷が蛇行し尾根が曲がる。振幅ではなく形の問題なので、ここが効く。
+    const wx = x + this.nWarp.noise(x * WARP_FREQ, z * WARP_FREQ) * WARP_AMOUNT;
+    const wz = z + this.nWarp.noise(x * WARP_FREQ + 137.2, z * WARP_FREQ - 91.7) * WARP_AMOUNT;
 
-    // 海底は緩やかに深く、陸は海面より少し上から始まる。
-    const base = mix(-34, 7, land);
+    const cont = this.continentalnessAt(x, z);
+    const ero = this.erosionAt(wx, wz);
+    const pv = peaksValleys(this.weirdnessAt(wx, wz));
 
-    // 山: 平坦でない場所ほど、かつ大陸の内側ほど高く伸びる。
-    const r = ridged(this.nRidge, x, z, 5, 0.0011);
-    const mountain = Math.pow(r, 1.9) * Math.pow(1 - flat, 1.5) * Math.pow(land, 1.6) * 135;
+    const base = spline(SP_BASE, cont);
+    // 起伏の大きさ。侵食度で決まり、海では抑える。
+    const relief = spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont);
 
-    // 丘: 平原にも軽い起伏を残す（真っ平らは退屈なので）。
-    const hill = fbm(this.nHill, x, z, 4, 0.0045) * 10 * land * mix(1.0, 0.45, flat);
+    // 尾根と谷。谷底側が平らになるようスプラインに通す（SP_PV 参照）。
+    let h = base + spline(SP_PV, pv) * relief;
 
-    // 細部: ローポリの面が単調にならない程度に。
-    const detail = fbm(this.nDetail, x, z, 3, 0.019) * 1.8 * land;
+    // 谷底らしさ。1 に近いほど「歩く場所」。
+    const valley = smoothstep(-0.1, -0.72, pv);
 
-    // 湖: 平らな低地にだけ、なめらかな盆地を掘る。掘った底が海面下なら水が入る。
-    const lk = fbm(this.nLake, x, z, 3, 0.0013) * 0.5 + 0.5;
-    const lakeMask = smoothstep(0.63, 0.88, lk) * flat * land;
-    const lake = lakeMask * 22;
+    // 侵食された細部。傾きが大きいところほど細かい起伏が弱まるので、
+    // 谷底が平らに、尾根が鋭くなる。水の流れは一切計算していない。
+    // 谷底ではさらに抑える。ここは見る場所ではなく歩く場所なので、
+    // 細部が残っていると足元が常にがたつく。
+    h += fbmEroded(this.nDetail, wx, wz, 4, 0.0055) * relief * 0.6 * (1 - valley * 0.82);
 
-    const plain = base + mountain + hill + detail - lake;
+    // 湖。平らな地方（侵食度が高い）の深い谷底をさらに掘る。
+    // 掘った底が海面下なら水が入る。水面は 1 枚の板なので、海抜より高い
+    // 内陸の湖は今の作りでは出せない（水際と低地にだけ出る）。
+    h -= smoothstep(-0.5, -0.92, pv) * smoothstep(0.02, 0.4, ero) * 30;
 
     // 地形の種類。ほとんどの場所は「ふつうの地形」で、ここで終わる。
     // 種類ごとの高さは 1 つしか評価しない（landform.ts の予算の注意を参照）。
+    const land = smoothstep(-0.06, 0.2, cont);
     const lf = landformAt(x, z, land, this.nLandformEdge, this.landformSalt);
-    if (lf.index !== LF_PLATEAU) return plain;
+    if (lf.index !== LF_PLATEAU) return h;
 
-    // 台地。天面の基準に base（大陸ノイズ由来、波長 2900m）を使うのが要点。
-    // 台地の差し渡し 600〜900m の中では base はほとんど変わらないので、天面が平らになる。
-    // ここで plain を基準にすると下の尾根や丘がそのまま天面に出て、
-    // 「持ち上げただけの山」に戻る＝高くて平らな場所ができない。
+    // 台地。天面の基準に base（大陸度スプライン、波長 2900m）を使うのが要点。
+    // 台地の差し渡し 500〜750m の中では base がほとんど変わらないので天面が平らになる。
+    // h を基準にすると下の尾根がそのまま天面に出て「持ち上げただけの山」に戻る。
     const rise = mix(PLATEAU_RISE_MIN, PLATEAU_RISE_MAX, lf.variant);
-    // 天面は真っ平らだと作り物に見えるので、丘を薄めて残す。
-    const top = base + rise + hill * 0.22 + detail;
-    return mix(plain, top, lf.strength);
+    return mix(h, base + rise, lf.strength);
   }
 
   /**
@@ -192,13 +360,18 @@ export class Terrain {
     const v = (z - z0) / step;
 
     const h00 = this.heightAt(x0, z0);
-    const h11 = this.heightAt(x0 + step, z0 + step);
-    if (v >= u) {
-      const h01 = this.heightAt(x0, z0 + step);
-      return h00 * (1 - v) + h01 * (v - u) + h11 * u;
-    }
     const h10 = this.heightAt(x0 + step, z0);
-    return h00 * (1 - u) + h10 * (u - v) + h11 * v;
+    const h01 = this.heightAt(x0, z0 + step);
+    const h11 = this.heightAt(x0 + step, z0 + step);
+
+    if (splitsAlongMainDiagonal(h00, h10, h01, h11)) {
+      // 対角線は h00-h11。
+      if (v >= u) return h00 * (1 - v) + h01 * (v - u) + h11 * u;
+      return h00 * (1 - u) + h10 * (u - v) + h11 * v;
+    }
+    // 対角線は h01-h10。
+    if (u + v <= 1) return h00 * (1 - u - v) + h01 * v + h10 * u;
+    return h01 * (1 - u) + h10 * (1 - v) + h11 * (u + v - 1);
   }
 
   /**

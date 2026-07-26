@@ -1,7 +1,6 @@
 import { hash2 } from '../core/rng';
-import { clamp } from './noise';
 import type { SpecialHit } from './special';
-import type { Terrain } from './terrain';
+import { splitsAlongMainDiagonal, type Terrain } from './terrain';
 
 /** 1 チャンクの一辺（ワールド単位 ≒ メートル）。 */
 export const CHUNK_SIZE = 192;
@@ -21,10 +20,16 @@ if (LOD_STEPS.length !== LOD_RINGS.length) {
 const SKIRT_DEPTH = 30;
 
 // 曲率による明暗（擬似 AO）。凹みを暗く、盛り上がりを明るくして、
-// 影を落とさずに地形の形を読ませる。実測した曲率の分布に合わせてある:
-// step で割った曲率は中央値 0.015・90% 0.05 で、LOD が変わってもほぼ一定。
-// GAIN 12 だと 90% の面が 0.6、それ以上は clamp で頭打ちになる。
-const CURVATURE_GAIN = 12;
+// 影を落とさずに地形の形を読ませる。
+//
+// **上限で頭打ちにしないこと。** 曲率は 2 階差分なので分布の裾が極端に長い。
+// 実測（step=2）で中央 0.008 に対し 99% は 0.30 と 38 倍ある。clamp で切ると
+// 1 割以上の面が一律 -34% に張り付き、縁の硬い黒い斑が斜面に散る。
+// x/(1+x) で柔らかく飽和させると、裾は伸びるが張り付かない。
+//
+// GAIN は地形の性質が変わるたびに合わせ直すこと。地形をスプラインで作り直した
+// とき、旧地形に合わせた 12 のままにして斜面が斑になった（一度これで壊した）。
+const CURVATURE_GAIN = 6;
 /** 凹み側。本物の AO も凹みの方が強く効くので、明るくする側より大きく取る。 */
 const CURVATURE_DARK = 0.34;
 /** 盛り上がり側。 */
@@ -118,12 +123,29 @@ export function buildChunkArrays(
       const curv =
         (Q(i, j) - (Q(i - 1, j) + Q(i + 1, j) + Q(i, j - 1) + Q(i, j + 1)) * 0.25) / step;
 
-      // heightOnGrid の三角形分割と必ず同じ切り方にすること（足元が浮かないため）。
-      shadeTri(terrain, h00, h01, h11, step, temp, moisture, special, curv, i, j, 0, faceColor);
-      tri(x0, h00, z0, x0, h01, z1, x1, h11, z1, faceColor[0], faceColor[1], faceColor[2]);
+      // 傾きは四角形あたり 1 度だけ。気候と同じ扱い。
+      // 三角形ごとに測ると、同じ四角形の 2 枚で値が食い違う（実測で step=48 の
+      // 90% が 0.15 ちがう）。岩色の切り替えは 0.42〜0.72 の幅 0.3 しかないので、
+      // 隣り合う三角形で岩と草が交互になり、斜面に細かい斜めの縞が出ていた。
+      const lo = Math.min(h00, h10, h01, h11);
+      const hi = Math.max(h00, h10, h01, h11);
+      const slope = Math.min(1, (hi - lo) / (step * 1.4142));
 
-      shadeTri(terrain, h00, h11, h10, step, temp, moisture, special, curv, i, j, 1, faceColor);
-      tri(x0, h00, z0, x1, h11, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
+      // 割り方の判定は terrain.ts に 1 つだけ置いてある。heightOnGrid も同じものを
+      // 使うので、足元と見た目が必ず一致する。ここでベタ書きに戻さないこと。
+      if (splitsAlongMainDiagonal(h00, h10, h01, h11)) {
+        shadeTri(terrain, h00, h01, h11, slope, temp, moisture, special, curv, i, j, 0, faceColor);
+        tri(x0, h00, z0, x0, h01, z1, x1, h11, z1, faceColor[0], faceColor[1], faceColor[2]);
+
+        shadeTri(terrain, h00, h11, h10, slope, temp, moisture, special, curv, i, j, 1, faceColor);
+        tri(x0, h00, z0, x1, h11, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
+      } else {
+        shadeTri(terrain, h00, h01, h10, slope, temp, moisture, special, curv, i, j, 0, faceColor);
+        tri(x0, h00, z0, x0, h01, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
+
+        shadeTri(terrain, h01, h11, h10, slope, temp, moisture, special, curv, i, j, 1, faceColor);
+        tri(x0, h01, z1, x1, h11, z1, x1, h10, z0, faceColor[0], faceColor[1], faceColor[2]);
+      }
     }
   }
 
@@ -161,7 +183,7 @@ function shadeTri(
   ha: number,
   hb: number,
   hc: number,
-  step: number,
+  slope: number,
   temp: number,
   moisture: number,
   special: SpecialHit,
@@ -172,14 +194,13 @@ function shadeTri(
   out: Float32Array,
 ): void {
   const h = (ha + hb + hc) / 3;
-  // 三角形内の高低差を水平方向の広がりで割ると、傾きの目安になる。
-  const spread = Math.max(Math.abs(ha - hb), Math.abs(hb - hc), Math.abs(ha - hc));
-  const slope = Math.min(1, spread / (step * 1.4142));
   terrain.shade(h, slope, temp, moisture, special, out, 0);
 
   // 曲率による明暗。凹みを暗くすることで、影を落とさずに形を読ませる。
   // 面ごとのランダムな明暗だけでは、平らな面の上では「模様」に見えて形に見えない。
-  const k = clamp(curv * CURVATURE_GAIN, -1, 1);
+  // x/(1+|x|) で柔らかく飽和させる（clamp で切ると黒い斑になる。CURVATURE_GAIN 参照）。
+  const g = curv * CURVATURE_GAIN;
+  const k = g / (1 + Math.abs(g));
   const shape = 1 + k * (k < 0 ? CURVATURE_DARK : CURVATURE_LIGHT);
 
   // わずかな揺らぎ。曲率がほぼ 0 の平地が均一になりすぎるのを防ぐ。
