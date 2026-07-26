@@ -87,8 +87,10 @@ function main(): void {
 
   const spawn = findSpawn(terrain);
   const player = new Player(terrain, spawn.x, spawn.z);
-  // 最初に目に入る向きは、太陽に少し背を向けた方が景色が読みやすい。
-  player.yaw = Math.atan2(-sky.sunDirection.x, -sky.sunDirection.z) + Math.PI;
+  // 最初に目に入る向きは、太陽から約 65° 横。
+  // 真後ろ（順光）だと影が自分の裏に隠れて景色が平坦に見え、正面（逆光）だと眩しい。
+  // 横から当たる光が、起伏が一番読める向き。
+  player.yaw = Math.atan2(-sky.sunDirection.x, -sky.sunDirection.z) + Math.PI * 0.36;
   // 一度だけ反映しておく。これをしないと、歩き出すまでカメラが原点に留まり、
   // 開始画面の背景がこれから立つ場所と別の景色になる。
   player.update(0, camera);

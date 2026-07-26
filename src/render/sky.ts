@@ -50,7 +50,7 @@ export interface SkyPreset {
   horizon: number;
   ground: number;
   sun: number;
-  /** 太陽の仰角（度）。 */
+  /** 太陽の仰角（度）。低いほど面の向きによる明暗の差が開く。 */
   elevation: number;
   /** 太陽の方位（度）。 */
   azimuth: number;
@@ -59,22 +59,101 @@ export interface SkyPreset {
   ambientGround: number;
   ambientIntensity: number;
   fogDensity: number;
+  /** この高さより上は霧が普通の濃さに戻る（m）。 */
+  fogHeightTop: number;
+  /** 海抜 0m での霧の増し方。1.0 なら濃さが 2 倍。 */
+  fogHeightBoost: number;
 }
 
-/** 穏やかな朝。落ち着いて歩ける明るさに寄せている。 */
+/**
+ * 朝もや。太陽を低くして面ごとの明暗を開き、低い土地に靄を溜める。
+ *
+ * 仰角を 34° から 13° に下げたぶん、平らな地面が受ける光は 1/2.5 になる。
+ * sunIntensity を上げているのはそれを戻すため。結果として「平らな面は控えめ、
+ * 太陽を向いた斜面は強く」となり、同じ地形でも起伏が読めるようになる。
+ */
 export const MORNING: SkyPreset = {
-  zenith: 0x5d8fd0,
-  horizon: 0xc7dbe6,
-  ground: 0xa9b6b4,
-  sun: 0xffe9c4,
-  elevation: 34,
+  zenith: 0x6c9ad9,
+  // 地平は白〜桜色の靄。霧の色もこれを使うので、遠景がそのまま空へ溶ける。
+  horizon: 0xf2e4dc,
+  ground: 0xdccfc4,
+  // 低い朝日。淡い金。
+  sun: 0xffd9a8,
+  elevation: 13,
   azimuth: 128,
-  sunIntensity: 2.6,
-  ambientSky: 0x9dc0e8,
-  ambientGround: 0x6b6a55,
-  ambientIntensity: 1.15,
-  fogDensity: 0.00055,
+  sunIntensity: 4.2,
+  ambientSky: 0xa9c8e8,
+  ambientGround: 0x6f6d58,
+  // 環境光を下げて、太陽に仕事をさせる。下げすぎると朝の柔らかさが消える。
+  ambientIntensity: 0.85,
+  // 400m で約 14%、1200m で約 75% 霞む。以前は 400m で 5% しか霞まず、
+  // 遠くの山が手前の丘と同じ濃さで描かれて奥行きが潰れていた。
+  fogDensity: 0.00095,
+  fogHeightTop: 32,
+  fogHeightBoost: 1.1,
 };
+
+// ---------------------------------------------------------------------------
+// 高さで濃くなる霧
+//
+// three の霧は距離だけで決まるので、低い土地に朝もやを溜められない。
+// 霧の計算そのもの（ShaderChunk）を差し替えて、断片の「高さ」も見るようにする。
+//
+// 差し替えを 1 か所に集めているのは、地形・植生・水面がそれぞれ別のマテリアルで、
+// 材質ごとに足すと 3 か所が独立に同じ判断をすることになるため。ここだけで決める。
+//
+// 触るときの注意:
+//  - 濃さと高さは**シェーダに直接埋め込んでいる**。uniform にすると three が
+//    霧の uniform を配る仕組み（scene.fog 由来の色と濃さだけ）に乗らず、
+//    マテリアルによって値が届いたり届かなかったりする。
+//  - 使えるのは `position` と `modelMatrix` だけ。水面は独自の頂点シェーダで
+//    `transformed` を持たない。`instanceMatrix` は植生（InstancedMesh）にしか無い。
+//  - FogExp2 前提で書いている（線形の Fog に変えると fogDensity が来ず落ちる）。
+//    scene.fog をこのファイルで作っているので、対応関係はここで閉じている。
+// ---------------------------------------------------------------------------
+let heightFogInstalled = false;
+
+function installHeightFog(preset: SkyPreset): void {
+  if (heightFogInstalled) return;
+  heightFogInstalled = true;
+
+  THREE.ShaderChunk.fog_pars_vertex = /* glsl */ `
+    #ifdef USE_FOG
+      varying float vFogDepth;
+      varying float vFogHeight;
+    #endif
+  `;
+
+  THREE.ShaderChunk.fog_vertex = /* glsl */ `
+    #ifdef USE_FOG
+      vFogDepth = - mvPosition.z;
+      vec4 fogWorldPos = vec4( position, 1.0 );
+      #ifdef USE_INSTANCING
+        fogWorldPos = instanceMatrix * fogWorldPos;
+      #endif
+      vFogHeight = ( modelMatrix * fogWorldPos ).y;
+    #endif
+  `;
+
+  THREE.ShaderChunk.fog_pars_fragment = /* glsl */ `
+    #ifdef USE_FOG
+      uniform vec3 fogColor;
+      uniform float fogDensity;
+      varying float vFogDepth;
+      varying float vFogHeight;
+    #endif
+  `;
+
+  THREE.ShaderChunk.fog_fragment = /* glsl */ `
+    #ifdef USE_FOG
+      // 低い土地ほど霧が濃い。丘は靄の上に抜け、水際と低地に残る。
+      float fogLow = 1.0 - smoothstep( 0.0, ${preset.fogHeightTop.toFixed(1)}, vFogHeight );
+      float fogD = fogDensity * ( 1.0 + ${preset.fogHeightBoost.toFixed(2)} * fogLow );
+      float fogFactor = 1.0 - exp( - fogD * fogD * vFogDepth * vFogDepth );
+      gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+    #endif
+  `;
+}
 
 /**
  * 空・光・霧をまとめて管理する。
@@ -88,6 +167,10 @@ export class Sky {
   private ambient: THREE.HemisphereLight;
 
   constructor(scene: THREE.Scene, preset: SkyPreset = MORNING) {
+    // マテリアルが 1 つも作られる前に済ませる。シェーダは最初の描画で組まれるので
+    // ここで十分だが、霧を持つのはこのクラスなので置き場所もここに揃えている。
+    installHeightFog(preset);
+
     const el = THREE.MathUtils.degToRad(preset.elevation);
     const az = THREE.MathUtils.degToRad(preset.azimuth);
     this.sunDirection.set(
