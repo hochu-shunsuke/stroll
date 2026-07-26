@@ -164,6 +164,33 @@ function peaksValleys(w: number): number {
 const WARP_FREQ = 0.0007;
 const WARP_AMOUNT = 170;
 
+// ---------------------------------------------------------------------------
+// 雨陰（rain shadow）
+//
+// 湿り気は独立したノイズだった。実測すると標高との相関が 0.02 ── **完全に
+// 無関係**で、砂漠が山の上にあっても密林が乾いた高原にあっても何も止まらない。
+// 気候帯の分布は良いのに、置かれる場所に理由が無かった。
+//
+// 地球では、風が山にぶつかって昇り、冷えて雨を落とす。だから山の風上は湿り、
+// 風下は乾く。本来は風に沿った水分輸送のシミュレーションだが、
+// **「風上を直線で調べて、一番高い障害を探す」だけでも同じ形が出る。**
+// これなら (x,z) の純粋関数のまま書ける。
+//
+// **予算の急所**: 素朴に heightAt を風上に 12 回呼ぶと 1 チャンクあたり
+// +116ms になって破綻する。雨陰に効くのは山の"塊"だけで細部は要らないので、
+// 粗い massAt（大陸ノイズ 3 オクターブ + スプライン）だけを見る。
+// ---------------------------------------------------------------------------
+
+/** 風上を何点調べるか。 */
+const RAIN_SAMPLES = 7;
+/** 調べる間隔（m）。SAMPLES × STEP が「山の影が届く距離」になる。 */
+const RAIN_STEP = 260;
+/** 風上の山が自分より何 m 高ければ影になり始めるか / 乾ききるか。 */
+const RAIN_LOW = 22;
+const RAIN_HIGH = 78;
+/** 雨陰で湿り気が最大どれだけ下がるか。1.0 にすると砂漠しか出なくなる。 */
+const RAIN_STRENGTH = 0.5;
+
 // 落ち着いた、彩度を抑えた自然の色。
 const C_SEABED = srgb(0x4d5a52);
 const C_SAND = srgb(0xcbbd97);
@@ -218,6 +245,9 @@ export class Terrain {
   private specialSalt: number;
   private nLandformEdge: Noise2D;
   private landformSalt: number;
+  /** 卓越風の向き（単位ベクトル）。世界ごとに変わる。 */
+  private windX: number;
+  private windZ: number;
 
   constructor(seed: string) {
     this.seed = seed;
@@ -235,6 +265,10 @@ export class Terrain {
     this.nLandformEdge = new Noise2D((c ^ 0x7feb352d) >>> 0);
     // 地形の種類の抽選にも同じくシードを混ぜる。
     this.landformSalt = (d ^ 0x846ca68b) >>> 0;
+    // 卓越風の向き。世界ごとに変わるので、どちら側が乾くかもシード次第になる。
+    const windAngle = (((a ^ 0x1b873593) >>> 0) / 0x100000000) * Math.PI * 2;
+    this.windX = Math.cos(windAngle);
+    this.windZ = Math.sin(windAngle);
   }
 
   /** 宝物区画の判定。詳しくは special.ts。 */
@@ -272,8 +306,47 @@ export class Terrain {
     return fbm(this.nRidge, x, z, 4, 0.0028);
   }
 
+  /**
+   * 粗い「山の塊」の高さ（m）。雨陰の障害物を測るためだけのもの。
+   *
+   * heightAt をそのまま使うと重すぎるので、大陸度と侵食度のスプラインだけで
+   * 尾根の高さを見積もる。細部・warp・谷・台地は雨陰に関係ないので全部省く。
+   * 大陸ノイズも 5 → 3 オクターブに落としてある（山の位置は粗い層で決まる）。
+   */
+  private massAt(x: number, z: number): number {
+    const cont = fbm(this.nContinent, x, z, 3, 0.00035);
+    const ero = fbm(this.nErosion, x, z, 2, 0.0011);
+    // 尾根の高さ ＝ 基準の高さ ＋ 起伏の半分。
+    return spline(SP_BASE, cont) + spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont) * 0.5;
+  }
+
+  /**
+   * 雨陰の強さ 0..1。1 に近いほど乾く。
+   * 風上をたどり、一番高い障害を探す。遠い山ほど効きを弱める。
+   */
+  private rainShadowAt(x: number, z: number): number {
+    // 効くのは山の絶対の高さではなく「自分よりどれだけ高いか」。
+    // これを忘れると山の上まで乾いて、陸の 64% が砂漠になる（一度そうした）。
+    const here = this.massAt(x, z);
+    let worst = 0;
+    for (let i = 1; i <= RAIN_SAMPLES; i++) {
+      const d = i * RAIN_STEP;
+      const m = this.massAt(x - this.windX * d, z - this.windZ * d);
+      // 遠い山ほど雨陰が薄れる（間でまた雲が育つため）。
+      const reach = 1 - (i - 1) / RAIN_SAMPLES;
+      const blocked = smoothstep(RAIN_LOW, RAIN_HIGH, m - here) * reach;
+      if (blocked > worst) worst = blocked;
+    }
+    return worst;
+  }
+
+  /**
+   * 湿り気 0..1。ノイズに雨陰を重ねる。
+   * 自分より高い山が風上にあるほど乾く。おかげで山脈の東西で景色が変わる。
+   */
   moistureAt(x: number, z: number): number {
-    return clamp(fbm(this.nMoisture, x, z, 3, 0.0009) * 0.5 + 0.5, 0, 1);
+    const base = fbm(this.nMoisture, x, z, 3, 0.0009) * 0.5 + 0.5;
+    return clamp(base - this.rainShadowAt(x, z) * RAIN_STRENGTH, 0, 1);
   }
 
   /**

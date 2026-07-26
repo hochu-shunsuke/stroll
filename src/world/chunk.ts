@@ -19,6 +19,25 @@ if (LOD_STEPS.length !== LOD_RINGS.length) {
 /** 継ぎ目の隙間を隠すためにチャンク外周から下ろすスカートの深さ。 */
 const SKIRT_DEPTH = 30;
 
+/**
+ * 湿り気を引く格子の間隔（m）。CHUNK_SIZE を割り切ること。
+ *
+ * 湿り気は雨陰の計算を含むので重い（1 回 3.4μs。ふつうのノイズの 40 倍）。
+ * 四角形ごとに引くと step=2 で 1 チャンク 9,216 回になり、生成が 13ms → 49ms に
+ * 跳ね上がって破綻する（一度これで壊した）。
+ *
+ * 湿り気が変わる波長は 1,100m 以上、雨陰はさらに長い。24m 間隔で引いて
+ * 線形補間しても、目に見える差は出ない。
+ * CHUNK_SIZE の約数なので、格子点は隣のチャンクと世界座標で一致する
+ * （＝継ぎ目で湿り気が飛ばない）。
+ */
+const CLIMATE_STEP = 24;
+
+// 割り切れないと格子が隣のチャンクとずれ、継ぎ目に湿り気の段差＝色の帯が出る。
+if (CHUNK_SIZE % CLIMATE_STEP !== 0) {
+  throw new Error('CLIMATE_STEP は CHUNK_SIZE を割り切ってください');
+}
+
 // 曲率による明暗（擬似 AO）。凹みを暗く、盛り上がりを明るくして、
 // 影を落とさずに地形の形を読ませる。
 //
@@ -73,6 +92,30 @@ export function buildChunkArrays(
   const Q = (i: number, j: number) =>
     (H(i, j) + H(i + 1, j) + H(i, j + 1) + H(i + 1, j + 1)) * 0.25;
 
+  // 湿り気は粗い格子で引いて補間する（CLIMATE_STEP 参照）。
+  const cg = CHUNK_SIZE / CLIMATE_STEP;
+  const cw = cg + 1;
+  const mgrid = new Float32Array(cw * cw);
+  for (let j = 0; j < cw; j++) {
+    for (let i = 0; i < cw; i++) {
+      mgrid[j * cw + i] = terrain.moistureAt(ox + i * CLIMATE_STEP, oz + j * CLIMATE_STEP);
+    }
+  }
+  /** チャンク内の相対座標で湿り気を引く。 */
+  const moistureLocal = (lx: number, lz: number) => {
+    const u = lx / CLIMATE_STEP;
+    const v = lz / CLIMATE_STEP;
+    const i = Math.min(cg - 1, u | 0);
+    const j = Math.min(cg - 1, v | 0);
+    const fu = u - i;
+    const fv = v - j;
+    const a = mgrid[j * cw + i];
+    const b = mgrid[j * cw + i + 1];
+    const c = mgrid[(j + 1) * cw + i];
+    const d = mgrid[(j + 1) * cw + i + 1];
+    return (a + (b - a) * fu) * (1 - fv) + (c + (d - c) * fu) * fv;
+  };
+
   const triCount = n * n * 2 + n * 8;
   const position = new Float32Array(triCount * 9);
   const normal = new Float32Array(triCount * 9);
@@ -113,7 +156,7 @@ export function buildChunkArrays(
       // 気候は四角形の中心で 1 度だけ引く。面ごとに引くほどの精度は要らない。
       const cx = ox + x0 + step * 0.5;
       const cz = oz + z0 + step * 0.5;
-      const moisture = terrain.moistureAt(cx, cz);
+      const moisture = moistureLocal(x0 + step * 0.5, z0 + step * 0.5);
       const temp = terrain.temperatureAt(cx, cz, (h00 + h11) * 0.5);
       const special = terrain.specialAt(cx, cz);
 
