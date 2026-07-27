@@ -1,6 +1,6 @@
 import { hashSeed } from '../core/rng';
 import { EDGE_WIDTH, EDGE_WOBBLE_RATE, LF_PLATEAU, landformAt } from './landform';
-import { Noise2D, clamp, fbm, fbmEroded, mix, smoothstep, spline } from './noise';
+import { Noise2D, clamp, fbm, fbmD, fbmEroded, mix, smoothstep, spline } from './noise';
 import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
 
 export const SEA_LEVEL = 0;
@@ -88,6 +88,22 @@ const SP_PV: readonly (readonly [number, number])[] = [
   [0.3, 0.2],
   [1.0, 0.52],
 ];
+
+/**
+ * 海岸の平坦化。基準の高さがこれより低いところでは起伏を弱める。
+ *
+ * **これが無いと海岸がリアス式になる。** 起伏は基準の高さに足し引きされるので、
+ * 基準が海面の近くだと起伏だけで海面線を何度も跨ぐ。実測では、まっすぐ歩くと
+ * 1km あたり 2.6 回も水際を跨ぎ、陸の 45% が水際 100m 以内という細切れだった。
+ *
+ * 同じ対策は外にもある。Minecraft は海岸の侵食度を高めに寄せて起伏を殺し、
+ * Dwarf Fortress は「山から海へ向かって標高を平滑化する」処理を回している。
+ * 現実の海岸平野が平らなのも同じ理由。
+ *
+ * 完全に 0 にはしない（浅瀬の海底が真っ平らになると不自然なため）。
+ */
+const COAST_FLAT_H = 12;
+const COAST_FLAT_FLOOR = 0.15;
 
 /**
  * 大陸度 → 起伏の効き方。
@@ -195,6 +211,53 @@ const GROVE_RANGE = 1.18;
 /** 雨陰で湿り気が最大どれだけ下がるか。1.0 にすると砂漠しか出なくなる。 */
 const RAIN_STRENGTH = 0.5;
 
+// ---------------------------------------------------------------------------
+// 谷筋（将来の川）
+//
+// 専用の**超低周波**ノイズのゼロ交差を彫る。ゼロ線は等高線なので必ず連結して
+// いて、彫るだけで繋がった谷が手に入る。流れの向きは計算しない。
+//
+// **いまは水を入れていない。涸れ谷である。** 理由は深さの実測にある。
+//
+//   彫る深さ  川筋を歩いたとき水が続く長さ  海岸への影響
+//     9m      水は入らない（涸れ谷）        水際 100m 以内の陸 47%
+//    11m      中央  36m（水たまりの列）      —
+//    26m      中央 468m（川に見える）        水際 100m 以内の陸 57% ★
+//
+// 水面が海抜固定の 1 枚板なので、水を入れるには地面を海面下まで彫るしかない。
+// 深く彫れば水は繋がるが、そのぶん低地が水没して**海岸がリアス式**になる。
+// 実測で水際の交差が 2.5 → 3.5 回/km（4 割増）になった。両立しない。
+//
+// **本当の壁は「流れの計算」ではなく「水面の設計」。** 水面を場所ごとに持てる
+// ようにすれば（terrain / chunk / chunkManager / water の 4 ファイル）、
+// RIVER_DEPTH を上げるだけで川になる。谷筋の骨格はそのまま使える。
+// ---------------------------------------------------------------------------
+
+/** 谷筋のノイズ。波長 1,800m ＝ ゆったり蛇行する。 */
+const RIVER_FREQ = 0.00055;
+/** 谷の半幅（m）。中心から左右にこれだけ。 */
+const RIVER_HALF = 62;
+/** 岸が下り切る内側の位置（半幅に対する割合）。 */
+const RIVER_INNER = 0.25;
+/**
+ * 彫る深さ（m）。水面を場所ごとに持てるようになったら 26 前後まで上げる。
+ * いまの 1 枚板のままで上げると海岸がリアス式になる（上の表）。
+ */
+const RIVER_DEPTH = 9;
+
+/**
+ * 谷の斜面の一番急なところの傾き。player の MAX_CLIMB と controller.ts で
+ * 突き合わせる（定数を書き写すと片方だけ変わって壊れるため）。
+ *
+ * **1.5 は smoothstep の最大傾斜が平均の 1.5 倍だから。** この項を忘れて
+ * 台地の縁と川岸で 2 回とも崖を作った。深さを変えるときは必ずここを見ること。
+ */
+export const STEEPEST_RIVER_BANK =
+  (1.5 * RIVER_DEPTH) / (RIVER_HALF * (1 - RIVER_INNER));
+
+// 川の判定に使い回す。1 回ごとに配列を作らないため。
+const RD = new Float32Array(3);
+
 // 落ち着いた、彩度を抑えた自然の色。
 const C_SEABED = srgb(0x4d5a52);
 const C_SAND = srgb(0xcbbd97);
@@ -243,6 +306,7 @@ export class Terrain {
   private nRidge: Noise2D;
   private nDetail: Noise2D;
   private nWarp: Noise2D;
+  private nRiver: Noise2D;
   private nGrove: Noise2D;
   private nMoisture: Noise2D;
   private nTemperature: Noise2D;
@@ -262,6 +326,7 @@ export class Terrain {
     this.nRidge = new Noise2D(c);
     this.nDetail = new Noise2D((a ^ 0x9e3779b9) >>> 0);
     this.nWarp = new Noise2D(d);
+    this.nRiver = new Noise2D((a ^ 0x27220a95) >>> 0);
     this.nGrove = new Noise2D((b ^ 0x2545f491) >>> 0);
     this.nMoisture = new Noise2D((c ^ 0xc2b2ae35) >>> 0);
     this.nTemperature = new Noise2D((d ^ 0x27d4eb2f) >>> 0);
@@ -414,8 +479,9 @@ export class Terrain {
     const pv = peaksValleys(this.weirdnessAt(wx, wz));
 
     const base = spline(SP_BASE, cont);
-    // 起伏の大きさ。侵食度で決まり、海では抑える。
-    const relief = spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont);
+    // 起伏の大きさ。侵食度で決まり、海では抑え、海岸では殺す（COAST_FLAT_H 参照）。
+    const coastFlat = mix(COAST_FLAT_FLOOR, 1, smoothstep(0, COAST_FLAT_H, base));
+    const relief = spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont) * coastFlat;
 
     // 尾根と谷。谷底側が平らになるようスプラインに通す（SP_PV 参照）。
     let h = base + spline(SP_PV, pv) * relief;
@@ -428,6 +494,20 @@ export class Terrain {
     // 谷底ではさらに抑える。ここは見る場所ではなく歩く場所なので、
     // 細部が残っていると足元が常にがたつく。
     h += fbmEroded(this.nDetail, wx, wz, 4, 0.0055) * relief * 0.6 * (1 - valley * 0.82);
+
+    // 谷筋。専用ノイズのゼロ線までの距離を出して彫る。
+    // 幅は勾配で正規化する。値だけで切ると、傾きが緩い所で川が異常に太くなる。
+    fbmD(this.nRiver, x, z, 3, RIVER_FREQ, RD);
+    const gradR = Math.hypot(RD[1], RD[2]);
+    const toRiver = Math.abs(RD[0]) / Math.max(gradR, 1e-9);
+    // 山では抑える。険しい所に川を通すと岸が崖の上に乗って不自然になる。
+    const calm = 1 - smoothstep(26, 62, relief);
+    const river =
+      smoothstep(RIVER_HALF, RIVER_HALF * RIVER_INNER, toRiver) *
+      smoothstep(-0.04, 0.1, cont) *
+      calm;
+    // 河口では浅くする。深いまま海に届くと谷ごとに入り江ができる。
+    if (river > 0) h -= river * RIVER_DEPTH * mix(0.25, 1, smoothstep(2, 22, base));
 
     // 湖。平らな地方（侵食度が高い）の深い谷底をさらに掘る。
     // 掘った底が海面下なら水が入る。水面は 1 枚の板なので、海抜より高い

@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { LOD_STEPS } from '../world/chunk';
-import { SEA_LEVEL, STEEPEST_LANDFORM_SLOPE, type Terrain } from '../world/terrain';
+import {
+  SEA_LEVEL,
+  STEEPEST_LANDFORM_SLOPE,
+  STEEPEST_RIVER_BANK,
+  type Terrain,
+} from '../world/terrain';
 
 /**
  * 目線の高さ。通信で送る y はこの高さの値なので、
@@ -23,6 +28,14 @@ if (STEEPEST_LANDFORM_SLOPE > MAX_CLIMB) {
   throw new Error(
     '台地の縁が MAX_CLIMB より急です。' +
       'terrain.ts の PLATEAU_RISE_MAX を下げるか landform.ts の EDGE_WIDTH を広げてください',
+  );
+}
+
+// 川岸も同じ。渡れない川は散歩を途切れさせる。
+if (STEEPEST_RIVER_BANK > MAX_CLIMB) {
+  throw new Error(
+    '川岸が MAX_CLIMB より急です。' +
+      'terrain.ts の RIVER_DEPTH を下げるか RIVER_HALF を広げてください',
   );
 }
 /** 泳ぎに切り替わる水深。 */
