@@ -58,6 +58,15 @@ export interface ChunkArrays {
   position: Float32Array;
   normal: Float32Array;
   color: Float32Array;
+  /**
+   * 内陸の水面の三角形（座標だけ）。無ければ長さ 0。
+   *
+   * 外洋はカメラ追従の 1 枚板が描くので、ここに出すのは**海抜より上の水**だけ。
+   * 水面の高さは terrain.waterLevelAt() が返す（湖は区画ごとに 1 つの定数なので
+   * 必ず水平になる）。材質は render/water.ts のものを使い回す ── あちらは
+   * 頂点の世界座標だけで波と映り込みを作るので、板でも湖でも同じに動く。
+   */
+  water: Float32Array;
 }
 
 /**
@@ -217,8 +226,93 @@ export function buildChunkArrays(
     tri(S, b, zb, S, b - D, zb, S, a - D, za, sr, sg, sb);
   }
 
-  return { position, normal, color };
+  return { position, normal, color, water: buildWater(terrain, ox, oz, step, n, H) };
 }
+
+/**
+ * 内陸の水面を三角形にする。地面より上に水がある四角形だけを出す。
+ *
+ * 地形と同じ格子を使う。水際で地形メッシュと食い違うと隙間が見えるため。
+ * 水面は水平なので法線も色も要らない（材質が世界座標から作る）。
+ */
+function buildWater(
+  terrain: Terrain,
+  ox: number,
+  oz: number,
+  step: number,
+  n: number,
+  H: (i: number, j: number) => number,
+): Float32Array {
+  // **まず粗い格子で湖があるか調べる。** waterLevelAt は湖の判定に地形を 1 度
+  // 引くので重く、格子点ごとに呼ぶと湖のあるチャンクだけ生成が 2 倍になる
+  // （25.7ms → 51.3ms。一度これで壊した）。
+  // 湖は差し渡し 290m 以上なので、48m 間隔で調べれば必ず引っかかる。
+  const PROBE = Math.max(step, 48);
+  const pn = Math.ceil(CHUNK_SIZE / PROBE);
+  let hasLake = false;
+  for (let j = 0; j <= pn && !hasLake; j++) {
+    for (let i = 0; i <= pn; i++) {
+      const px = Math.min(i * PROBE, CHUNK_SIZE);
+      const pz = Math.min(j * PROBE, CHUNK_SIZE);
+      if (terrain.waterLevelAt(ox + px, oz + pz) > -Infinity) {
+        hasLake = true;
+        break;
+      }
+    }
+  }
+  if (!hasLake) return new Float32Array(0);
+
+  // 湖があると分かったチャンクだけ、格子点ごとに水面を引く。
+  const w = n + 1;
+  const ws = new Float32Array(w * w);
+  let any = false;
+  for (let j = 0; j <= n; j++) {
+    for (let i = 0; i <= n; i++) {
+      const v = terrain.waterLevelAt(ox + i * step, oz + j * step);
+      ws[j * w + i] = v;
+      if (v > -Infinity && v > H(i, j)) any = true;
+    }
+  }
+  if (!any) return new Float32Array(0);
+
+  const out: number[] = [];
+  const put = (i: number, j: number, y: number) => {
+    out.push(i * step, y, j * step);
+  };
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      // **1 隅でも水面下なら張る。** 岸の内側まで水を伸ばして、地形に隠させる。
+      //
+      // 「4 隅すべてが水面下のときだけ」にすると、水のポリゴンが格子に沿った
+      // 階段で終わる。地形は水面線をなめらかに横切るので、階段と本当の水際の
+      // 間に切れ込みが並び、水際がガタついて見える（実際にそうなった）。
+      // 広めに張って深度で切らせれば、境界線は画素単位でなめらかになる。
+      let level = -Infinity;
+      let wet = false;
+      for (const [di, dj] of CORNERS) {
+        const lv = ws[(j + dj) * w + (i + di)];
+        if (lv === -Infinity) continue;
+        if (lv > level) level = lv;
+        if (lv > H(i + di, j + dj)) wet = true;
+      }
+      if (!wet) continue;
+      put(i, j, level);
+      put(i, j + 1, level);
+      put(i + 1, j + 1, level);
+      put(i, j, level);
+      put(i + 1, j + 1, level);
+      put(i + 1, j, level);
+    }
+  }
+  return new Float32Array(out);
+}
+
+const CORNERS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [1, 0],
+  [0, 1],
+  [1, 1],
+];
 
 /** 三角形 1 枚の色を、その 3 頂点の高さと傾き、そして四角形の曲率から決める。 */
 function shadeTri(

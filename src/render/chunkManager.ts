@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { vegetation } from './vegetation';
 import { CHUNK_SIZE, LOD_RINGS } from '../world/chunk';
+import { RENDER_ORDER } from './order';
 import type { BuiltChunk, WorkerRequest } from '../world/worker';
 
 const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
@@ -8,6 +9,8 @@ const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
 interface Chunk {
   mesh: THREE.Mesh;
   scatter: THREE.Group | null;
+  /** 内陸の水面（湖）。無ければ null。 */
+  lake: THREE.Mesh | null;
   lod: number;
   cx: number;
   cz: number;
@@ -28,6 +31,7 @@ interface Pending {
 export class ChunkManager {
   private scene: THREE.Scene;
   private material: THREE.Material;
+  private waterMaterial: THREE.Material;
   private chunks = new Map<string, Chunk>();
   private inFlight = new Map<number, string>();
   private queue: Pending[] = [];
@@ -40,9 +44,10 @@ export class ChunkManager {
   /** 足元付近のチャンクが揃ったか（開始画面を閉じる判定に使う）。 */
   ready = false;
 
-  constructor(scene: THREE.Scene, seed: string) {
+  constructor(scene: THREE.Scene, seed: string, waterMaterial: THREE.Material) {
     this.scene = scene;
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.waterMaterial = waterMaterial;
 
     const count = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
     for (let i = 0; i < count; i++) {
@@ -157,6 +162,21 @@ export class ChunkManager {
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
 
+    // 内陸の水面（湖）。海はカメラ追従の板が描くので、ここは湖だけ。
+    // 材質は water.ts と共有する（別々に作ると設定がいつかずれる）。
+    let lake: THREE.Mesh | null = null;
+    if (data.water.length > 0) {
+      const wgeo = new THREE.BufferGeometry();
+      wgeo.setAttribute('position', new THREE.BufferAttribute(data.water, 3));
+      wgeo.computeBoundingSphere();
+      lake = new THREE.Mesh(wgeo, this.waterMaterial);
+      lake.position.copy(mesh.position);
+      lake.matrixAutoUpdate = false;
+      lake.updateMatrix();
+      lake.renderOrder = RENDER_ORDER.water;
+      this.scene.add(lake);
+    }
+
     let scatter: THREE.Group | null = null;
     if (data.batches.length > 0) {
       const veg = vegetation();
@@ -182,7 +202,7 @@ export class ChunkManager {
     const old = this.chunks.get(key);
     if (old) this.disposeChunk(old);
 
-    this.chunks.set(key, { mesh, scatter, lod: data.lod, cx: data.cx, cz: data.cz });
+    this.chunks.set(key, { mesh, scatter, lake, lod: data.lod, cx: data.cx, cz: data.cz });
 
     // 生成中にプレイヤーが動いて、必要な粗さが変わっていることがある。
     // ここで積み直さないと、次にチャンク境界を跨ぐまで粗いまま残る。
@@ -205,6 +225,10 @@ export class ChunkManager {
   private disposeChunk(chunk: Chunk): void {
     this.scene.remove(chunk.mesh);
     chunk.mesh.geometry.dispose();
+    if (chunk.lake) {
+      this.scene.remove(chunk.lake);
+      chunk.lake.geometry.dispose();
+    }
     if (chunk.scatter) {
       this.scene.remove(chunk.scatter);
       for (const child of chunk.scatter.children) {

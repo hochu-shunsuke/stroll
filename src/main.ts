@@ -85,7 +85,8 @@ function main(): void {
   // 雲の並びも合言葉から決める。同じ世界なら空も同じ。
   const sky = new Sky(scene, MORNING, hashSeed(seed)[0]);
   const water = new Water(scene, sky.sunDirection, MORNING.horizon, MORNING.sun);
-  const chunks = new ChunkManager(scene, seed);
+  // 湖の水面はチャンクが作るが、材質は海と共有する。
+  const chunks = new ChunkManager(scene, seed, water.material);
 
   const spawn = findSpawn(terrain);
   const player = new Player(terrain, spawn.x, spawn.z);

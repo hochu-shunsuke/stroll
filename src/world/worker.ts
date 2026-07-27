@@ -28,6 +28,8 @@ export interface BuiltChunk {
   position: Float32Array;
   normal: Float32Array;
   color: Float32Array;
+  /** 内陸の水面（座標だけ）。無ければ長さ 0。 */
+  water: Float32Array;
   batches: BuiltBatch[];
 }
 
@@ -53,6 +55,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     position: geo.position,
     normal: geo.normal,
     color: geo.color,
+    water: geo.water,
     batches,
   };
 
@@ -61,6 +64,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     geo.position.buffer as ArrayBuffer,
     geo.normal.buffer as ArrayBuffer,
     geo.color.buffer as ArrayBuffer,
+    geo.water.buffer as ArrayBuffer,
   ];
   for (const b of batches) {
     transfer.push(b.matrices.buffer as ArrayBuffer, b.colors.buffer as ArrayBuffer);

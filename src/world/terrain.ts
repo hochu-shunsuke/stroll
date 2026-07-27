@@ -1,4 +1,14 @@
 import { hashSeed } from '../core/rng';
+import {
+  LAKE_DEPTH,
+  type LakeCell,
+  type LakeHit,
+  NO_LAKE,
+  RIM_HEIGHT,
+  lakeCellAt,
+  lakeCellOf,
+  lakeShapeAt,
+} from './lake';
 import { EDGE_WIDTH, EDGE_WOBBLE_RATE, LF_PLATEAU, landformAt } from './landform';
 import { Noise2D, clamp, fbm, fbmD, fbmEroded, mix, smoothstep, spline } from './noise';
 import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
@@ -234,6 +244,11 @@ const RAIN_STRENGTH = 0.5;
 // ---------------------------------------------------------------------------
 
 /** 谷筋のノイズ。波長 1,800m ＝ ゆったり蛇行する。 */
+/** 湖の底を海面からどれだけ上に保つか（m）。 */
+const LAKE_BED_MIN = 0.6;
+/** 湖の水面が海面よりこれだけ高くないと作らない（m）。 */
+const LAKE_MIN_ABOVE_SEA = 2.0;
+
 const RIVER_FREQ = 0.00055;
 /** 谷の半幅（m）。中心から左右にこれだけ。 */
 const RIVER_HALF = 62;
@@ -252,6 +267,8 @@ const RIVER_DEPTH = 9;
  * **1.5 は smoothstep の最大傾斜が平均の 1.5 倍だから。** この項を忘れて
  * 台地の縁と川岸で 2 回とも崖を作った。深さを変えるときは必ずここを見ること。
  */
+export { STEEPEST_SHORE } from './lake';
+
 export const STEEPEST_RIVER_BANK =
   (1.5 * RIVER_DEPTH) / (RIVER_HALF * (1 - RIVER_INNER));
 
@@ -306,6 +323,10 @@ export class Terrain {
   private nRidge: Noise2D;
   private nDetail: Noise2D;
   private nWarp: Noise2D;
+  private nLakeEdge: Noise2D;
+  /** 区画ごとの湖の記憶。判定が重いので使い回す。 */
+  private lakeCells = new Map<string, LakeCell | null>();
+  private lakeSalt: number;
   private nRiver: Noise2D;
   private nGrove: Noise2D;
   private nMoisture: Noise2D;
@@ -326,6 +347,9 @@ export class Terrain {
     this.nRidge = new Noise2D(c);
     this.nDetail = new Noise2D((a ^ 0x9e3779b9) >>> 0);
     this.nWarp = new Noise2D(d);
+    this.nLakeEdge = new Noise2D((c ^ 0x3b9aca07) >>> 0);
+    // 湖の抽選にもシードを混ぜる。忘れると全世界で湖の位置が同じになる。
+    this.lakeSalt = (a ^ 0x5bd1e995) >>> 0;
     this.nRiver = new Noise2D((a ^ 0x27220a95) >>> 0);
     this.nGrove = new Noise2D((b ^ 0x2545f491) >>> 0);
     this.nMoisture = new Noise2D((c ^ 0xc2b2ae35) >>> 0);
@@ -454,6 +478,57 @@ export class Terrain {
   }
 
   /**
+   * 湖の判定。
+   *
+   * **重い部分（区画に湖があるか・水面の高さ）は区画ごとに 1 度だけ**計算して
+   * 覚えておく。点ごとにやると地形を丸ごと 1 回引くことになり、湖のある
+   * チャンクだけ生成が 2〜3 倍になる（一度これで壊した）。
+   */
+  private lakeHit(x: number, z: number): LakeHit {
+    const [cx, cz] = lakeCellOf(x, z);
+    const key = `${cx},${cz}`;
+    let cell = this.lakeCells.get(key);
+    if (cell === undefined) {
+      cell = lakeCellAt(
+        cx,
+        cz,
+        this.nContinent,
+        this.nErosion,
+        this.lakeSalt,
+        SP_BASE,
+        this.groundBeforeLake,
+      );
+      // 際限なく溜めない。歩き続けても区画は 1,450m 四方なので、
+      // この上限に達する頃には遠く離れた区画しか残っていない。
+      if (this.lakeCells.size > 2048) this.lakeCells.clear();
+      this.lakeCells.set(key, cell);
+    }
+    // **海面すれすれの湖は作らない。** 海の板と重なって水面が二重に見える。
+    // ここで弾いておかないと、heightAt が窪みを彫ったのに waterLevelAt が
+    // 水を返さず、水の無い穴が残る。判定は 1 か所に置くこと。
+    if (cell === null || cell.level <= SEA_LEVEL + LAKE_MIN_ABOVE_SEA) return NO_LAKE;
+    return lakeShapeAt(x, z, cell, this.nLakeEdge);
+  }
+
+  /**
+   * 湖を入れる前の地面の高さ。lake.ts へ渡す。
+   * heightAt をそのまま渡すと、湖の判定の中から湖の判定を呼んで無限再帰する。
+   */
+  private groundBeforeLake = (x: number, z: number): number => this.shapeAt(x, z);
+
+  /**
+   * その地点の水面の高さ。水が無ければ -Infinity。
+   *
+   * 外洋と海は 1 枚の板（render/water.ts）が描くので、ここは**海抜より上の水**
+   * だけを返す。チャンクごとの水面メッシュがこれを見て三角形を出す。
+   */
+  waterLevelAt(x: number, z: number): number {
+    const lake = this.lakeHit(x, z);
+    if (lake.strength <= 0) return -Infinity;
+    return lake.level;
+  }
+
+  /**
    * 標高。海面は 0。
    *
    * ノイズを足し合わせるのではなく、**3 つのパラメータをスプラインに通す**。
@@ -468,6 +543,39 @@ export class Terrain {
    * これが「海の中に平らな島がある」以外の景色を作れなかった原因だった。
    */
   heightAt(x: number, z: number): number {
+    let h = this.shapeAt(x, z);
+
+    // 内陸の湖。水面は区画ごとに 1 つの定数なので必ず水平になる（lake.ts）。
+    const lake = this.lakeHit(x, z);
+    if (lake.strength > 0) {
+      // **水際でちょうど水面の高さになるよう、湖の内側は地形を完全に置き換える。**
+      // 以前は元の地形と混ぜていたので、水際で強さが 0 に近いと彫りが効かず、
+      // 元の地形（水面より 4m 下）がそのまま残って水が段差で終わっていた。
+      // strength は中心で 1、水際で 0 なので、これで水深が 0 → LAKE_DEPTH に
+      // なめらかに深くなり、水際と地形の交わる線が一致する。
+      // **底を海面より下げないこと。** 海の板（y = SEA_LEVEL）は世界中に
+      // 敷いてあるので、湖の底が海面より低いと湖の中に海が現れ、水面が
+      // 二重に見える（実際にそうなった）。浅い湖は平底になるが、それでよい。
+      h = Math.max(SEA_LEVEL + LAKE_BED_MIN, lake.level - LAKE_DEPTH * lake.strength);
+    } else if (lake.rim > 0) {
+      // 水際の外側。**水面と同じ高さから立ち上げること。**
+      // いきなり level + RIM_HEIGHT にすると、水際の全周に RIM_HEIGHT の崖が
+      // 立ち、それが格子でサンプルされて水際がギザギザに震えて見える
+      // （実測で 2m 進む間に 2.18m の段差 ＝ ちょうど RIM_HEIGHT だった）。
+      //
+      // rim は水際で 1、外で 0。それを裏返して「水際からの遠さ」にする。
+      const out = 1 - lake.rim;
+      // 水際からの立ち上がり。out=0（水際）でちょうど水面の高さになる。
+      const wall = lake.level + RIM_HEIGHT * smoothstep(0, 0.5, out);
+      // 自然の地形へは**時間をかけて**戻す。水際のすぐ外で戻すと、湖が斜面に
+      // 接している所で崖になる（実測で 90% 点が 13.7m、最大 66m の段差だった）。
+      h = mix(wall, Math.max(h, wall), smoothstep(0.1, 0.6, out));
+    }
+    return h;
+  }
+
+  /** 湖を入れる前の地形。湖の判定がここを呼ぶので、湖を含めてはいけない。 */
+  private shapeAt(x: number, z: number): number {
     // 座標をゆがめる（domain warping）。
     // ノイズが等方のままだと、何を重ねても丸い塊にしかならない。
     // ゆがめると谷が蛇行し尾根が曲がる。振幅ではなく形の問題なので、ここが効く。
@@ -509,10 +617,6 @@ export class Terrain {
     // 河口では浅くする。深いまま海に届くと谷ごとに入り江ができる。
     if (river > 0) h -= river * RIVER_DEPTH * mix(0.25, 1, smoothstep(2, 22, base));
 
-    // 湖。平らな地方（侵食度が高い）の深い谷底をさらに掘る。
-    // 掘った底が海面下なら水が入る。水面は 1 枚の板なので、海抜より高い
-    // 内陸の湖は今の作りでは出せない（水際と低地にだけ出る）。
-    h -= smoothstep(-0.5, -0.92, pv) * smoothstep(0.02, 0.4, ero) * 30;
 
     // 地形の種類。ほとんどの場所は「ふつうの地形」で、ここで終わる。
     // 種類ごとの高さは 1 つしか評価しない（landform.ts の予算の注意を参照）。

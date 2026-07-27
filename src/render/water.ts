@@ -77,12 +77,22 @@ function col(hex: number): THREE.Color {
  * 海面と湖面。1 枚の大きな面をカメラに追従させて無限に見せる。
  * 波は法線だけで作るので、面の分割は粗くてよい。
  */
-export class Water {
-  private mesh: THREE.Mesh;
-  private material: THREE.ShaderMaterial;
+/**
+ * 水の材質。海の板と、チャンクごとの内陸水面（湖）が**同じものを共有する**。
+ *
+ * 別々に作ると、波・色・透明度・描画順のどれかがいつかずれる。
+ * この材質は頂点の世界座標だけから波と映り込みを作るので、
+ * カメラ追従の板でも、湖の形をした三角形でも、そのまま動く。
+ */
+let shared: THREE.ShaderMaterial | null = null;
 
-  constructor(scene: THREE.Scene, sunDirection: THREE.Vector3, skyHorizon: number, sunHex: number) {
-    this.material = new THREE.ShaderMaterial({
+export function waterMaterial(
+  sunDirection: THREE.Vector3,
+  skyHorizon: number,
+  sunHex: number,
+): THREE.ShaderMaterial {
+  if (!shared) {
+    shared = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
         uShallow: { value: col(0x5c93a0) },
@@ -98,7 +108,32 @@ export class Water {
       depthWrite: false,
       side: THREE.DoubleSide,
       fog: true,
+      // 水際では水面と地形の深度がほぼ同じになり、画素ごとに勝敗が揺れて
+      // ちらつく（Z ファイティング）。実測で海の水際の 3% が隙間 5cm 未満。
+      //
+      // **水を奥へ寄せる（正の値）こと。** 水は岸の内側まで張ってあり、
+      // 地形に隠されて初めて水際の線ができる。手前へ寄せると水が土手を
+      // 突き抜けて、水際が広がってしまう。
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 2,
     });
+  }
+  return shared;
+}
+
+/** 時間を進める。材質を共有しているので、呼ぶのは 1 か所でよい。 */
+export function updateWaterTime(elapsed: number): void {
+  if (shared) shared.uniforms.uTime.value = elapsed;
+}
+
+export class Water {
+  /** チャンクごとの内陸水面（湖）も同じものを使う。 */
+  readonly material: THREE.ShaderMaterial;
+  private mesh: THREE.Mesh;
+
+  constructor(scene: THREE.Scene, sunDirection: THREE.Vector3, skyHorizon: number, sunHex: number) {
+    this.material = waterMaterial(sunDirection, skyHorizon, sunHex);
 
     const geo = new THREE.PlaneGeometry(9000, 9000, 1, 1);
     geo.rotateX(-Math.PI / 2);
@@ -110,7 +145,7 @@ export class Water {
   }
 
   update(camera: THREE.Camera, elapsed: number): void {
-    this.material.uniforms.uTime.value = elapsed;
+    updateWaterTime(elapsed);
     // 波は世界座標で計算しているので、面をずらしても模様は動かない。
     this.mesh.position.x = camera.position.x;
     this.mesh.position.z = camera.position.z;

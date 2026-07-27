@@ -4,6 +4,7 @@ import {
   SEA_LEVEL,
   STEEPEST_LANDFORM_SLOPE,
   STEEPEST_RIVER_BANK,
+  STEEPEST_SHORE,
   type Terrain,
 } from '../world/terrain';
 
@@ -31,11 +32,19 @@ if (STEEPEST_LANDFORM_SLOPE > MAX_CLIMB) {
   );
 }
 
-// 川岸も同じ。渡れない川は散歩を途切れさせる。
+// 谷の斜面も同じ。渡れない谷は散歩を途切れさせる。
 if (STEEPEST_RIVER_BANK > MAX_CLIMB) {
   throw new Error(
-    '川岸が MAX_CLIMB より急です。' +
+    '谷の斜面が MAX_CLIMB より急です。' +
       'terrain.ts の RIVER_DEPTH を下げるか RIVER_HALF を広げてください',
+  );
+}
+
+// 湖の岸も同じ。上がれない湖に落ちると出られなくなる。
+if (STEEPEST_SHORE > MAX_CLIMB) {
+  throw new Error(
+    '湖の岸が MAX_CLIMB より急です。' +
+      'lake.ts の SINK / LAKE_DEPTH を下げるか SHORE_WIDTH を広げてください',
   );
 }
 /** 泳ぎに切り替わる水深。 */
