@@ -11,6 +11,7 @@ import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
 import { normalizeSeed, randomSeed } from '../shared/seed';
+import { hashSeed } from './core/rng';
 import { createTouchControls, isTouchDevice, type TouchControls } from './ui/touch';
 
 const LOOK_SENSITIVITY = 0.0022;
@@ -81,7 +82,8 @@ function main(): void {
   camera.rotation.order = 'YXZ';
 
   const terrain = new Terrain(seed);
-  const sky = new Sky(scene, MORNING);
+  // 雲の並びも合言葉から決める。同じ世界なら空も同じ。
+  const sky = new Sky(scene, MORNING, hashSeed(seed)[0]);
   const water = new Water(scene, sky.sunDirection, MORNING.horizon, MORNING.sun);
   const chunks = new ChunkManager(scene, seed);
 
@@ -293,7 +295,7 @@ function main(): void {
     }
     avatars.update(dt, camera);
 
-    sky.update(camera);
+    sky.update(camera, elapsed);
     water.update(camera, elapsed);
     renderer.render(scene, camera);
   });
