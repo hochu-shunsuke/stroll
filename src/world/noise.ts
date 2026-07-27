@@ -346,6 +346,41 @@ export function spline(pts: readonly (readonly [number, number])[], x: number): 
   return pts[last][1];
 }
 
+/**
+ * 折れ点ごとの接線を持つ 3 次 Hermite 曲線。
+ *
+ * `spline()` は各区間を smoothstep で結ぶため、すべての折れ点で接線が 0 になる。
+ * 基準標高のように長い上りを複数区間へ分けたい場合、それでは折れ点ごとに
+ * 「平ら → 斜面 → 平ら」が繰り返される。Minecraft の地形用 CubicSpline と
+ * 同じく接線を明示し、上りの途中では勾配を次の区間へ連続させる。
+ *
+ * pts は [入力, 出力, 入力 1 あたりの出力の傾き]。
+ */
+export function hermiteSpline(
+  pts: readonly (readonly [number, number, number])[],
+  x: number,
+): number {
+  if (x <= pts[0][0]) return pts[0][1];
+  const last = pts.length - 1;
+  if (x >= pts[last][0]) return pts[last][1];
+  for (let i = 0; i < last; i++) {
+    const [ax, ay, am] = pts[i];
+    const [bx, by, bm] = pts[i + 1];
+    if (x > bx) continue;
+    const width = bx - ax;
+    const t = (x - ax) / width;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return (
+      (2 * t3 - 3 * t2 + 1) * ay +
+      (t3 - 2 * t2 + t) * width * am +
+      (-2 * t3 + 3 * t2) * by +
+      (t3 - t2) * width * bm
+    );
+  }
+  return pts[last][1];
+}
+
 export function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);

@@ -9,8 +9,24 @@ import {
   lakeCellOf,
   lakeShapeAt,
 } from './lake';
-import { EDGE_WIDTH, EDGE_WOBBLE_RATE, LF_PLATEAU, landformAt } from './landform';
-import { Noise2D, clamp, fbm, fbmD, fbmEroded, mix, smoothstep, spline } from './noise';
+import {
+  EDGE_WIDEN_MAX,
+  EDGE_WIDTH,
+  EDGE_WOBBLE_RATE,
+  LF_PLATEAU,
+  landformAt,
+} from './landform';
+import {
+  Noise2D,
+  clamp,
+  fbm,
+  fbmD,
+  fbmEroded,
+  hermiteSpline,
+  mix,
+  smoothstep,
+  spline,
+} from './noise';
 import { SPECIAL_BIOMES, type SpecialHit, specialAt, srgb } from './special';
 
 export const SEA_LEVEL = 0;
@@ -29,6 +45,15 @@ const PLATEAU_RISE_MAX = 38;
  *
  * **この 2 つ目の項を忘れて一度壊した。** 見積もりでは 1.05 だったが実測の
  * 最大は 4.84 で、縁の 27% が歩いて登れない台地になっていた。
+ *
+ * **そして 2 度目は、この式が嘘をついていることに気づかず壊した。** 式は落差が
+ * PLATEAU_RISE_MAX で頭打ちだと仮定しているが、当時の天面は base（大陸度）
+ * 基準で、h に乗る起伏や山塊を知らなかった。実測の落差は最大 116m、傾きは
+ * この値の 5.4 倍あった。**定数どうしを比べる検査は、定数が現実を表して
+ * いなければ何も守らない。**
+ * 今は縁の幅を落差に比例させ、落差そのものにも上限を置いてあるので
+ * （shapeAt の末尾）、この式は本当に上限になっている。変えるときは
+ * 「落差 / 幅」の比が保たれているか必ず測ること。
  *
  * player 側の登坂限界（MAX_CLIMB）より急いと、歩いて台地に上がれなくなる。
  * その突き合わせは controller.ts で行う（MAX_CLIMB をここに書き写すと、
@@ -49,18 +74,26 @@ export const STEEPEST_LANDFORM_SLOPE =
 //  - 海の割合は SP_BASE がゼロを跨ぐ入力値で決まる
 // ---------------------------------------------------------------------------
 
-/** 大陸度 → 基準の高さ（m）。外洋から奥地まで。 */
-const SP_BASE: readonly (readonly [number, number])[] = [
-  [-1.0, -58],
-  [-0.42, -30],
-  [-0.16, -7],
-  [-0.05, 3], // 渚。ここが急 ＝ 海岸線がはっきり出る
-  [0.04, 10],
-  [0.24, 16], // 広い低地。ここが平ら ＝ 平原が広がる
-  [0.36, 64], // 内陸の段。ここが急 ＝ 断崖と台地の縁
-  [0.58, 88],
-  [1.0, 142],
+/**
+ * 大陸度 → 基準の高さ（m）。外洋から奥地まで。
+ *
+ * 6 シード × 40,000 点で、15m/20m の面積比 3.10 → 1.79、
+ * 20〜55m の各帯 2.02% → 3.01%。低地は 65.76% → 66.92% を保つ。
+ */
+const SP_BASE: readonly (readonly [number, number, number])[] = [
+  [-1.0, -58, 0],
+  [-0.42, -30, 0],
+  [-0.16, -7, 0],
+  [-0.05, 3, 0], // 渚。海岸の接線は変えず、海陸の割合を保つ
+  [0.04, 10, 0],
+  [0.216, 16, 57], // 低地の平らさを残しつつ、内陸の上りへ接線をつなぐ
+  [0.442, 58, 174],
+  [0.64, 90, 153],
+  [1.0, 142, 134],
 ];
+
+/** 大陸度だけから決まる基準標高。湖も必ずこの同じ曲線を使う。 */
+const baseHeight = (cont: number): number => hermiteSpline(SP_BASE, cont);
 
 /**
  * 侵食度 → 起伏の振れ幅（m）。高いほど平ら。
@@ -229,6 +262,15 @@ function peaksValleys(w: number): number {
 const WARP_FREQ = 0.0007;
 const WARP_AMOUNT = 170;
 
+/**
+ * 内陸の標高帯を場所ごとにずらす低周波ノイズ。
+ *
+ * 海陸を決める大陸度そのものは動かさない。cont=0.1 より海側では 0 にし、
+ * 2,500m 波長でスプライン入力だけを最大 ±0.05 ずらす。
+ */
+const BASE_JITTER_FREQ = 0.0004;
+const BASE_JITTER_AMOUNT = 0.05;
+
 // ---------------------------------------------------------------------------
 // 雨陰（rain shadow）
 //
@@ -250,9 +292,12 @@ const WARP_AMOUNT = 170;
 const RAIN_SAMPLES = 7;
 /** 調べる間隔（m）。SAMPLES × STEP が「山の影が届く距離」になる。 */
 const RAIN_STEP = 260;
-/** 風上の山が自分より何 m 高ければ影になり始めるか / 乾ききるか。 */
-const RAIN_LOW = 22;
-const RAIN_HIGH = 78;
+/**
+ * 風上の山が自分より何 m 高ければ影になり始めるか / 乾ききるか。
+ * 基準標高の再配分後も雨陰の平均を 0.187 → 0.185 に保つよう再較正済み。
+ */
+const RAIN_LOW = 18;
+const RAIN_HIGH = 64;
 /** 森のかたまりの下限と振れ幅。下限 + 振れ幅/2 が 1.0 になるように取る。 */
 const GROVE_FLOOR = 0.42;
 const GROVE_RANGE = 1.18;
@@ -320,39 +365,42 @@ const C_SAND = srgb(0xcbbd97);
 const C_ROCK = srgb(0x878175);
 const C_ROCK_DARK = srgb(0x6b6760);
 
-// 気候帯ごとの地面の色。気温（寒→暑）× 湿り（乾→湿）の格子で決まる。
-// 乾いた側（寒→温→暑）
-const C_TUNDRA = srgb(0x8f948a); // 寒・乾: 色あせた灰緑
-const C_GRASS_DRY = srgb(0x9aa76b); // 温・乾: 乾いた黄緑（草原）
-const C_DESERT = srgb(0xcbbe95); // 暑・乾: 砂
-// 湿った側（寒→温→暑）
-const C_SNOW = srgb(0xe7ecef); // 寒・湿: 雪
-const C_FOREST = srgb(0x5c7a51); // 温・湿: 深い森
-const C_JUNGLE = srgb(0x577f43); // 暑・湿: みずみずしい密林
+const C_SNOW = srgb(0xe7ecef);
 
-// shade() の途中計算に使い回す。面ごとに配列を作らないため。
-const DRY: [number, number, number] = [0, 0, 0];
-const WET: [number, number, number] = [0, 0, 0];
+/**
+ * 気候帯ごとの地面の色。気温 3 段 × 湿り気 3 段の格子を双一次で混ぜる。
+ *
+ * **段の位置は実測の分位点に置いてある（下の STOPS）。** 名目の 0..1 に置くと、
+ * 気温は中央値 0.41・9 割地点でも 0.75 までしか行かないので、端の色（砂漠・
+ * 密林）に一生たどり着かなかった。世界が黄緑一色に見えていた原因のひとつ。
+ *
+ * **真ん中の湿り気に独自の色を与えたのが要。** 世界の 6 割はここに居るのに、
+ * 以前は「乾と湿の中間色」しか無く、サバンナもタイガも表現できなかった。
+ * Minecraft のバイオームを調べて分かった一番大きな穴がこれ。
+ */
+const TEMP_STOPS = [0.14, 0.45, 0.76] as const;
+const MOIST_STOPS = [0.15, 0.42, 0.66] as const;
 
-/** 3 段階の色を t(0..1) で補間する。気温の寒→温→暑に沿って地面色を作る。 */
-function ramp3(
-  cold: readonly number[],
-  mid: readonly number[],
-  hot: readonly number[],
-  t: number,
-  out: [number, number, number],
-): void {
-  if (t < 0.5) {
-    const k = smoothstep(0, 0.5, t);
-    out[0] = mix(cold[0], mid[0], k);
-    out[1] = mix(cold[1], mid[1], k);
-    out[2] = mix(cold[2], mid[2], k);
-  } else {
-    const k = smoothstep(0.5, 1, t);
-    out[0] = mix(mid[0], hot[0], k);
-    out[1] = mix(mid[1], hot[1], k);
-    out[2] = mix(mid[2], hot[2], k);
-  }
+// [湿り気の段 * 3 + 気温の段]。気温は寒→温→暑、湿り気は乾→中→湿。
+const CLIMATE = [
+  // 乾
+  srgb(0x8f948a), // 寒・乾: ツンドラ（色あせた灰緑）
+  srgb(0xa9b273), // 温・乾: 乾いた草原
+  srgb(0xcfc399), // 暑・乾: 砂漠
+  // 中
+  srgb(0x6f8069), // 寒・中: タイガ（暗い青緑）
+  srgb(0x74904f), // 温・中: 森
+  srgb(0xb0a061), // 暑・中: サバンナ（金茶）
+  // 湿
+  C_SNOW, //         寒・湿: 雪
+  srgb(0x50733f), // 温・湿: 深い森
+  srgb(0x4f8437), // 暑・湿: みずみずしい密林
+] as const;
+
+/** 段の並びの中で t がどの区間に居るかと、その中の位置（smoothstep 済み）。 */
+function segment(stops: readonly number[], t: number): [number, number] {
+  if (t <= stops[1]) return [0, smoothstep(stops[0], stops[1], t)];
+  return [1, smoothstep(stops[1], stops[2], t)];
 }
 
 export class Terrain {
@@ -362,6 +410,7 @@ export class Terrain {
   private nRidge: Noise2D;
   private nDetail: Noise2D;
   private nWarp: Noise2D;
+  private nBaseJitter: Noise2D;
   private nLakeEdge: Noise2D;
   /** 区画ごとの湖の記憶。判定が重いので使い回す。 */
   private lakeCells = new Map<string, LakeCell | null>();
@@ -386,6 +435,7 @@ export class Terrain {
     this.nRidge = new Noise2D(c);
     this.nDetail = new Noise2D((a ^ 0x9e3779b9) >>> 0);
     this.nWarp = new Noise2D(d);
+    this.nBaseJitter = new Noise2D((d ^ 0xa24baed5) >>> 0);
     this.nLakeEdge = new Noise2D((c ^ 0x3b9aca07) >>> 0);
     // 湖の抽選にもシードを混ぜる。忘れると全世界で湖の位置が同じになる。
     this.lakeSalt = (a ^ 0x5bd1e995) >>> 0;
@@ -451,8 +501,18 @@ export class Terrain {
     const cont = fbm(this.nContinent, x, z, 3, 0.00035);
     const ero = fbm(this.nErosion, x, z, 2, 0.0011);
     // 尾根の高さ ＝ 基準の高さ ＋ 起伏の半分。
-    return spline(SP_BASE, cont) + spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont) * 0.5;
+    return this.baseHeightAt(x, z, cont) + spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont) * 0.5;
   }
+
+  /** 海岸線を固定したまま、内陸の標高帯だけを場所ごとにずらす。 */
+  private baseHeightAt = (x: number, z: number, cont: number): number => {
+    const inland = smoothstep(0.1, 0.28, cont);
+    const jitter =
+      this.nBaseJitter.noise(x * BASE_JITTER_FREQ, z * BASE_JITTER_FREQ) *
+      BASE_JITTER_AMOUNT *
+      inland;
+    return baseHeight(cont + jitter);
+  };
 
   /**
    * 雨陰の強さ 0..1。1 に近いほど乾く。
@@ -511,8 +571,8 @@ export class Terrain {
     // 振れ幅 0.75。0.5 だと温帯に寄りすぎて砂漠や雪にほぼ出会えなかった。
     // これで寒・暑が各 1 割ほど現れつつ、温帯が過半を保つ。
     const base = clamp(fbm(this.nTemperature, x, z, 3, 0.0006) * 0.75 + 0.5, 0, 1);
-    // 標高による冷え込み。海抜 8m から効き始め、120m 上がると 0.6 下がる。
-    const lapse = Math.max(0, h - 8) * 0.005;
+    // 標高による冷え込み。海抜 8m から効き始め、100m 上がると 0.6 下がる。
+    const lapse = Math.max(0, h - 8) * 0.006;
     return clamp(base - lapse, 0, 1);
   }
 
@@ -534,7 +594,7 @@ export class Terrain {
         this.nContinent,
         this.nErosion,
         this.lakeSalt,
-        SP_BASE,
+        this.baseHeightAt,
         this.groundBeforeLake,
       );
       // 際限なく溜めない。歩き続けても区画は 1,450m 四方なので、
@@ -606,9 +666,20 @@ export class Terrain {
       const out = 1 - lake.rim;
       // 水際からの立ち上がり。out=0（水際）でちょうど水面の高さになる。
       const wall = lake.level + RIM_HEIGHT * smoothstep(0, 0.5, out);
+
+      // 溢れ止め。地面が縁より低ければ縁の高さまで持ち上げる。
+      //
+      // **持ち上げは帯の外へ向かって 0 に落とすこと。** ここは以前
+      // `Math.max(h, wall)` と書いてあり、帯の端まで全力のまま効いていた。
+      // 帯を 1m 出ると持ち上げが消えるので、そこに**高さの不連続**が生まれる。
+      // 実測で「1m 進む間に 38.9m 落ちる」崖が湖の全周に立ち、垂直な板が
+      // 並んで見えた（傾きではなく不連続なので、傾きを測る検査では捕まらない）。
+      //
+      // out < 0.45（水際に近い側）では全力のまま。ここを弱めると水が溢れる。
+      const guard = Math.max(0, wall - h) * (1 - smoothstep(0.45, 1, out));
       // 自然の地形へは**時間をかけて**戻す。水際のすぐ外で戻すと、湖が斜面に
       // 接している所で崖になる（実測で 90% 点が 13.7m、最大 66m の段差だった）。
-      h = mix(wall, Math.max(h, wall), smoothstep(0.1, 0.6, out));
+      h = mix(wall, h + guard, smoothstep(0.1, 0.6, out));
     }
     return h;
   }
@@ -625,7 +696,7 @@ export class Terrain {
     const ero = this.erosionAt(wx, wz);
     const pv = peaksValleys(this.weirdnessAt(wx, wz));
 
-    const base = spline(SP_BASE, cont);
+    const base = this.baseHeightAt(x, z, cont);
     // 起伏の大きさ。侵食度で決まり、海では抑え、海岸では殺す（COAST_FLAT_H 参照）。
     const coastFlat = mix(COAST_FLAT_FLOOR, 1, smoothstep(0, COAST_FLAT_H, base));
     const relief = spline(SP_RELIEF, ero) * spline(SP_RELIEF_GATE, cont) * coastFlat;
@@ -679,11 +750,30 @@ export class Terrain {
     const lf = landformAt(x, z, land, this.nLandformEdge, this.landformSalt);
     if (lf.index !== LF_PLATEAU) return h;
 
-    // 台地。天面の基準に base（大陸度スプライン、波長 2900m）を使うのが要点。
-    // 台地の差し渡し 500〜750m の中では base がほとんど変わらないので天面が平らになる。
-    // h を基準にすると下の尾根がそのまま天面に出て「持ち上げただけの山」に戻る。
+    // 台地。天面の基準は「その場所の**滑らかな**骨格」でなければならない。
+    // 台地の差し渡し 500〜750m の中でほとんど変わらない量だけを使うので天面が平らになる。
+    // h をそのまま基準にすると下の尾根が天面に出て「持ち上げただけの山」に戻る。
+    //
+    // **山塊を基準に含めること。** base（大陸度スプライン）だけを見ていた頃は、
+    // h に乗る起伏・尾根・山塊を天面が一切知らず、実測で最大 116m ずれていた。
+    // 縁の落差の 30% が想定の 38m を超え、**24% は落差がマイナス**
+    // ＝ 台地が周りより低い穴になっていた。山塊を足すと、山の上の台地は
+    // 山を削らずに「肩」になる。
     const rise = mix(PLATEAU_RISE_MIN, PLATEAU_RISE_MAX, lf.variant);
-    return mix(h, base + rise, lf.strength);
+    const top = base + massif * PEAK_MASSIF + rise;
+
+    // **縁の幅を落差に比例させる。** 幅が固定だと、落差が大きい縁だけが
+    // そのぶん急になって壁になる。比例させると落差が何メートルでも
+    // 縁の傾きは一定に保たれ、STEEPEST_LANDFORM_SLOPE が本当のことを言う。
+    const drop = Math.abs(top - h);
+    const widen = clamp(drop / PLATEAU_RISE_MAX, 1, EDGE_WIDEN_MAX);
+    const strength = smoothstep(lf.edge, lf.edge - EDGE_WIDTH * widen, lf.dist) * lf.onLand;
+
+    // 広げても足りないぶんは落差そのものを抑える。ここが最後の歯止めで、
+    // これがあるおかげで縁の傾きに本当の上限が生まれる。
+    const cap = PLATEAU_RISE_MAX * EDGE_WIDEN_MAX;
+    const capped = drop > cap ? h + (top - h) * (cap / drop) : top;
+    return mix(h, capped, strength);
   }
 
   /**
@@ -726,18 +816,22 @@ export class Terrain {
   ): void {
     // 岩肌: 急斜面ほど、そして高所ほど土が乗らない。
     const rocky = clamp(
-      smoothstep(0.42, 0.72, slope) + smoothstep(52, 88, h) * 0.75,
+      smoothstep(0.42, 0.72, slope) + smoothstep(35, 80, h) * 0.75,
       0,
       1,
     );
 
-    // 気候帯の地面色。まず乾いた側と湿った側を気温で作り、湿り気で混ぜる。
-    ramp3(C_TUNDRA, C_GRASS_DRY, C_DESERT, temp, DRY);
-    ramp3(C_SNOW, C_FOREST, C_JUNGLE, temp, WET);
-    const wetness = smoothstep(0.35, 0.68, moisture);
-    let r = mix(DRY[0], WET[0], wetness);
-    let g = mix(DRY[1], WET[1], wetness);
-    let b = mix(DRY[2], WET[2], wetness);
+    // 気候帯の地面色。3×3 の格子から囲む 4 色を取り、双一次で混ぜる。
+    const [ti, tk] = segment(TEMP_STOPS, temp);
+    const [mi, mk] = segment(MOIST_STOPS, moisture);
+    const o0 = mi * 3 + ti;
+    const c00 = CLIMATE[o0];
+    const c10 = CLIMATE[o0 + 1];
+    const c01 = CLIMATE[o0 + 3];
+    const c11 = CLIMATE[o0 + 4];
+    let r = mix(mix(c00[0], c10[0], tk), mix(c01[0], c11[0], tk), mk);
+    let g = mix(mix(c00[1], c10[1], tk), mix(c01[1], c11[1], tk), mk);
+    let b = mix(mix(c00[2], c10[2], tk), mix(c01[2], c11[2], tk), mk);
 
     // 宝物区画: 気候の地面色を宝物の色で上書きする。
     // 浜辺・水中・岩・雪より前に混ぜるので、宝物の中でも崖や水際は自然に残る。
@@ -761,7 +855,7 @@ export class Terrain {
     b = mix(b, C_SEABED[2], under);
 
     // 岩。高いところほど暗く冷たい灰に。
-    const rockMix = smoothstep(40, 80, h);
+    const rockMix = smoothstep(28, 68, h);
     const rr = mix(C_ROCK[0], C_ROCK_DARK[0], rockMix);
     const rg = mix(C_ROCK[1], C_ROCK_DARK[1], rockMix);
     const rb = mix(C_ROCK[2], C_ROCK_DARK[2], rockMix);
@@ -770,8 +864,11 @@ export class Terrain {
     b = mix(b, rb, rocky);
 
     // 雪: 十分に寒く、あまり急でない面に積もる。気温は標高でも下がるので、
-    //     暑い地方でも高い山の頂は白くなる。
-    const snow = smoothstep(0.22, 0.08, temp) * (1 - smoothstep(0.55, 0.85, slope));
+    //     暑い地方でも高い山の頂は白くなる（頂上では lapse で気温が 0 に張り付く）。
+    //
+    // **閾値は 0.22 から下げてある。** 上の格子にタイガ（寒・中）を足したのに、
+    // 前の閾値だと寒い側の 6 割が雪で塗り潰されて、その色が一度も見えなかった。
+    const snow = smoothstep(0.16, 0.03, temp) * (1 - smoothstep(0.55, 0.85, slope));
     r = mix(r, C_SNOW[0], snow);
     g = mix(g, C_SNOW[1], snow);
     b = mix(b, C_SNOW[2], snow);

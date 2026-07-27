@@ -1,5 +1,5 @@
 import { hash2 } from '../core/rng';
-import { Noise2D, fbm, mix, smoothstep, spline } from './noise';
+import { Noise2D, fbm, mix, smoothstep } from './noise';
 
 /**
  * 内陸の湖。
@@ -49,8 +49,24 @@ const WOBBLE = 0.2;
 const WOBBLE_FREQ = 0.0021;
 /** 岸の帯の幅（m）。ここで水面から周りの地面へ上がる。 */
 export const SHORE_WIDTH = 46;
-/** 水際の外側で、地面を持ち上げる帯の幅（m）。 */
+/**
+ * 水際の外側で、地面を持ち上げる帯の**基準**の幅（m）。
+ *
+ * **実際の幅は湖ごとに、周りの地面の落ち込みに比例して広がる**（lakeCellAt）。
+ * 幅を固定していた頃は、周りが水面より 40m 低い湖でもこの 70m に押し込まれ、
+ * 全周が崖になっていた。落差に比例させると縁の傾きが一定に保たれる。
+ */
 const RIM_WIDTH = 70;
+
+/** この落差のときに RIM_WIDTH をそのまま使う（m）。 */
+const RIM_DROP_REF = 8;
+/**
+ * 帯を広げてよい上限の倍率。
+ *
+ * 掃引して選んだ。3 倍で湖 18 個、4 倍で 20 個、**5 倍にすると 32m の段差が
+ * 復活する**（帯が広がりすぎて隣の地形に届き、そこの落ち込みまで受けようとする）。
+ */
+const RIM_WIDEN_MAX = 4;
 /** 縁を水面よりどれだけ高くするか（m）。 */
 export const RIM_HEIGHT = 2.2;
 /** 水面を周りの基準の高さからどれだけ下げるか。 */
@@ -59,6 +75,14 @@ const SINK = 5.5;
 export const LAKE_DEPTH = 7.5;
 /** 中心の実地形が水面からこれ以上離れていたら作らない（m）。 */
 const LEVEL_TOLERANCE = 9;
+
+/**
+ * 縁のまわりの地面が水面よりこれ以上低かったら作らない（m）。
+ *
+ * 帯を広げても追いつかない所を落とすための最後の歯止め。
+ * ここまでの落差なら `RIM_WIDTH × RIM_WIDEN_MAX` の帯で受けられる。
+ */
+const RIM_DROP_MAX = RIM_DROP_REF * RIM_WIDEN_MAX;
 
 /**
  * 岸のいちばん急なところの傾き。
@@ -74,6 +98,8 @@ export interface LakeCell {
   radius: number;
   /** 水面の高さ。区画で 1 つの定数なので、湖は必ず水平になる。 */
   level: number;
+  /** 縁の帯の幅（m）。周りの地面の落ち込みに比例して広がる。 */
+  rimWidth: number;
 }
 
 /** 座標から湖の区画番号を出す。呼び側がここを見て記憶する。 */
@@ -88,7 +114,7 @@ export function lakeCellOf(x: number, z: number): [number, number] {
  * 呼べばよいので、呼び側が結果を記憶すること。点ごとに呼ぶと、湖のある
  * チャンクだけ生成が 2〜3 倍になる（一度これで壊した）。
  *
- * @param baseSpline 大陸度 → 基準の高さ のスプライン（terrain.ts から渡す）。
+ * @param baseHeightAt 座標と大陸度 → 基準の高さ の関数（terrain.ts から渡す）。
  *   湖側で高さの決め方を持たないことで、地形の設定変更が水面にも自動で効く。
  * @param groundAt 湖を入れる前の地面の高さ。
  */
@@ -98,7 +124,7 @@ export function lakeCellAt(
   contNoise: Noise2D,
   eroNoise: Noise2D,
   seedSalt: number,
-  baseSpline: readonly (readonly [number, number])[],
+  baseHeightAt: (x: number, z: number, continentalness: number) => number,
   groundAt: (x: number, z: number) => number,
 ): LakeCell | null {
   const s1 = (0x6d2b79f5 ^ seedSalt) >>> 0;
@@ -114,7 +140,7 @@ export function lakeCellAt(
   if (smoothstep(-0.02, 0.3, eroAtCenter) < 0.5) return null;
 
   const contAtCenter = fbm(contNoise, centerX, centerZ, 3, 0.00035);
-  const level = spline(baseSpline, contAtCenter) - SINK;
+  const level = baseHeightAt(centerX, centerZ, contAtCenter) - SINK;
 
   // **基準の高さと実際の地形が離れている所には作らない。**
   // ずれていると湖が斜面や台地の縁に乗って、片側だけ水が溢れる
@@ -122,16 +148,46 @@ export function lakeCellAt(
   if (Math.abs(groundAt(centerX, centerZ) - level) > LEVEL_TOLERANCE) return null;
 
   const radius = CELL * mix(RADIUS_MIN, RADIUS_MAX, hash2(cx, cz, (s1 + 3) >>> 0));
-  return { centerX, centerZ, radius, level };
+
+  // **縁のまわりも見ること。中心だけでは足りない。**
+  // 中心が水面と揃っていても、湖が斜面の肩に乗っていれば、下り側の地面は
+  // 水面より遥かに低い。中心しか見ていなかったせいで、水面より 40m 低い
+  // 地面の上に湖が乗り、全周が崖になっていた。
+  //
+  // 測るのは区画ごとに 1 度だけ。地形を 16 回引くが、区画は 1,450m 四方なので
+  // 点ごとの費用にはならない。
+  //
+  // **2 段階で測る。** 見るべきなのは「帯の外の端での落差」だが、帯の幅は
+  // その落差から決まる（下）ので互いを待っている。まず基準の幅で測って幅を
+  // 見積もり、その幅でもう一度測る。いきなり最大幅で測ると、実際には使わない
+  // 遠くの落ち込みまで拾って厳しくなりすぎ、湖が 34 個から 15 個に減った。
+  const rim = radius * (1 + WOBBLE);
+  const dropAt = (w: number): number => {
+    let d = 0;
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI) / 4;
+      d = Math.max(d, level - groundAt(centerX + Math.cos(a) * (rim + w), centerZ + Math.sin(a) * (rim + w)));
+    }
+    return d;
+  };
+  // **落差に比例して帯を広げる。** こうすると落差が何メートルでも縁の傾きは
+  // 変わらない。弾いて済ませると湖が半分に減ったが、広げれば残せる。
+  const widen = (d: number): number =>
+    RIM_WIDTH * Math.min(RIM_WIDEN_MAX, Math.max(1, d / RIM_DROP_REF));
+  const drop = dropAt(widen(dropAt(RIM_WIDTH)));
+  if (drop > RIM_DROP_MAX) return null;
+  const rimWidth = widen(drop);
+
+  return { centerX, centerZ, radius, level, rimWidth };
 }
 
 /** その地点が湖のどこに当たるか。区画が分かっていれば安い（ノイズ 1 回）。 */
 export function lakeShapeAt(x: number, z: number, cell: LakeCell, edgeNoise: Noise2D): LakeHit {
   const d = Math.hypot(x - cell.centerX, z - cell.centerZ);
   const edge = cell.radius * (1 + WOBBLE * edgeNoise.noise(x * WOBBLE_FREQ, z * WOBBLE_FREQ));
-  if (d >= edge + RIM_WIDTH) return NO_LAKE;
+  if (d >= edge + cell.rimWidth) return NO_LAKE;
   const strength = smoothstep(edge, edge - SHORE_WIDTH, d);
-  const rim = smoothstep(edge + RIM_WIDTH, edge, d);
+  const rim = smoothstep(edge + cell.rimWidth, edge, d);
   if (strength <= 0 && rim <= 0) return NO_LAKE;
   return { strength, rim, level: cell.level };
 }

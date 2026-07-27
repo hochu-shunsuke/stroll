@@ -76,6 +76,9 @@ const GIANT_MAX = 2.05;
 /**
  * 気候で決まる普通の植生。
  * 宝物区画では木が引っ込む（宝物の木に場所を譲る）。岩だけは残す。
+ *
+ * 基準標高の再配分後、同じ 96 チャンクで全配置 11,979 → 11,795、
+ * 木 6,498 → 6,575 になるよう密度を再較正してある。
  */
 const CLIMATE_SPECS: KindSpec[] = [
   {
@@ -90,7 +93,7 @@ const CLIMATE_SPECS: KindSpec[] = [
       if (c.h < 3.2 || c.h > 52) return 0;
       const climate = smoothstep(0.34, 0.68, c.moisture) * band(c.temp, 0.4, 0.62, 0.9);
       const density =
-        climate * c.grove * (1 - smoothstep(34, 52, c.h)) * 0.9 * (1 - c.special.strength);
+        climate * c.grove * (1 - smoothstep(34, 52, c.h)) * 0.7 * (1 - c.special.strength);
       if (c.r > density) return 0;
       if (c.slope > 0.42) return 0;
       return 0.75 + ((c.r * 977) % 1) * 0.6;
@@ -106,7 +109,7 @@ const CLIMATE_SPECS: KindSpec[] = [
     place: (c) => {
       if (c.h < 6 || c.h > 96) return 0;
       const climate = smoothstep(0.22, 0.55, c.moisture) * band(c.temp, 0.12, 0.34, 0.6);
-      const density = climate * c.grove * 0.85 * (1 - c.special.strength);
+      const density = climate * c.grove * 0.77 * (1 - c.special.strength);
       if (c.r > density) return 0;
       if (c.slope > 0.5) return 0;
       return 0.8 + ((c.r * 613) % 1) * 0.7;
@@ -124,11 +127,11 @@ const CLIMATE_SPECS: KindSpec[] = [
     maxLod: 1,
     place: (c) => {
       if (c.h < 1.0) return 0;
-      // 密度は最大でも (0.05+0.75+0.2)*0.6 = 0.6。先に落として崖の判定を省く。
-      if (c.r > 0.6) return 0;
+      // 密度は最大でも (0.05+0.75+0.2)*0.75 = 0.75。先に落として崖の判定を省く。
+      if (c.r > 0.75) return 0;
       // 上に崖があり、かつ自分はそこまで急でない ＝ 溜まり場。
       const pile = smoothstep(0.5, 1.4, c.talus) * (1 - smoothstep(0.45, 0.85, c.slope));
-      const density = (0.05 + pile * 0.75 + smoothstep(50, 90, c.h) * 0.2) * 0.6;
+      const density = (0.05 + pile * 0.75 + smoothstep(50, 90, c.h) * 0.2) * 0.75;
       if (c.r > density) return 0;
       return 0.6 + ((c.r * 331) % 1) * 2.4;
     },
@@ -143,7 +146,7 @@ const CLIMATE_SPECS: KindSpec[] = [
       if (c.h < 2.4 || c.h > 60) return 0;
       const climate = smoothstep(0.28, 0.6, c.moisture) * band(c.temp, 0.35, 0.6, 0.92);
       // 下草は森の中で濃い。かたまりの効きは木より弱くする（空き地にも少し残す）。
-      const density = climate * mix(1, c.grove, 0.65) * 0.55 * (1 - c.special.strength);
+      const density = climate * mix(1, c.grove, 0.65) * 0.44 * (1 - c.special.strength);
       if (c.r > density) return 0;
       if (c.slope > 0.55) return 0;
       return 0.7 + ((c.r * 149) % 1) * 0.9;
@@ -342,6 +345,11 @@ export function buildScatterData(
         const h = terrain.heightAt(x, z);
         // 水面下と、明らかに条件外の場所は重い判定に入る前に落とす。
         if (h < 0.8) continue;
+        // **内陸の湖も水面下。** ここは海面（0m）しか見ていなかったので、
+        // 湖の中に木がびっしり生えていた。湖の水面は場所ごとに高さが違うので、
+        // 海と同じ判定では拾えない。heightAt が既に区画を引いているため、
+        // ここでの引き直しは覚えてある値の読み出しで済む。
+        if (h < terrain.waterLevelAt(x, z) + 0.6) continue;
         CTX.h = h;
         CTX.r = r;
         CTX.moisture = moistureAt(x, z);

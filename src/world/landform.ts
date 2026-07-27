@@ -37,13 +37,23 @@ const LANDFORM_RARITY = [0.42];
 export interface LandformHit {
   /** LANDFORM_RARITY の添字（LF_*）。ふつうの地形なら -1。 */
   index: number;
-  /** その場所での強さ 0..1。天面で 1、縁の外で 0。 */
-  strength: number;
+  /** 中心からの距離（メートル）。 */
+  dist: number;
+  /** 縁の位置（中心からの距離、メートル）。dist < edge の内側だけが区画。 */
+  edge: number;
+  /** 陸らしさ 0..1。海岸で 0 に落ちる。強さに掛けること。 */
+  onLand: number;
   /** その区画ごとに決まる乱数 0..1。高さの振れ幅などに使う。 */
   variant: number;
 }
 
-export const NO_LANDFORM: LandformHit = { index: -1, strength: 0, variant: 0 };
+export const NO_LANDFORM: LandformHit = {
+  index: -1,
+  dist: 0,
+  edge: 0,
+  onLand: 0,
+  variant: 0,
+};
 
 /**
  * 抽選に使う升目（メートル）。
@@ -61,11 +71,17 @@ const WOBBLE = 0.18;
 const WOBBLE_FREQ = 0.0016;
 
 /**
- * 縁の帯の幅（メートル）。ここで天面から周りの高さへ落ちる。
+ * 縁の帯の**基準**の幅（メートル）。落差が PLATEAU_RISE_MAX のときの幅。
  *
- * terrain.ts が持ち上げる高さは、この幅と釣り合わせること。
+ * **実際の幅は terrain.ts が落差に比例させて広げる。** 幅を固定していた頃は、
+ * 落差が想定の 38m を超えた 30% の縁が全部そのぶん急になり、最大 116m の
+ * 落差が 72m の帯に押し込まれて壁になっていた。
+ * 幅を落差に比例させると、落差が何メートルでも縁の傾きは一定になる。
  */
 export const EDGE_WIDTH = 72;
+
+/** 縁の幅を広げてよい上限の倍率。これ以上は落差そのものを抑える。 */
+export const EDGE_WIDEN_MAX = 2.4;
 
 /**
  * 縁の位置そのものが、歩くにつれてずれる速さ。
@@ -128,8 +144,10 @@ export function landformAt(
   // 細かく波打たせるほど縁が急になる（EDGE_WOBBLE_RATE 参照）。
   // 輪郭を崩したいだけなので、区画の差し渡しより長い波長でゆっくり振る。
   const edge = radius * (1 + WOBBLE * edgeNoise.noise(x * WOBBLE_FREQ, z * WOBBLE_FREQ));
-  const strength = smoothstep(edge, edge - EDGE_WIDTH, d) * onLand;
-  if (strength <= 0) return NO_LANDFORM;
+  // 区画の外。**ここが早期打ち切りの条件**で、縁の帯の幅とは無関係に
+  // `d >= edge` だけで決まる。帯を内側へ広げても（terrain.ts が落差に応じて
+  // そうする）この判定は変わらない ＝ 予算の前提が壊れない。
+  if (d >= edge) return NO_LANDFORM;
 
-  return { index, strength, variant: hash2(cx, cz, (s1 + 4) >>> 0) };
+  return { index, dist: d, edge, onLand, variant: hash2(cx, cz, (s1 + 4) >>> 0) };
 }
