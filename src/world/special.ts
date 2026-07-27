@@ -26,7 +26,7 @@ export interface SpecialBiome {
   name: string;
   /**
    * 出現しやすさ 0..1。全宝物の合計がおよそ「特別な区画になる割合」。
-   * ここを大きくすると宝物が宝物でなくなるので、合計 0.1 未満に抑える。
+   * ここを大きくすると宝物が宝物でなくなるので、合計 0.15 以下に抑える。
    */
   rarity: number;
   /** 地面の色（リニア RGB）。気候の地面色をこれで上書きする。 */
@@ -62,10 +62,10 @@ function meadow(name: string, rarity: number, groundHex: number): SpecialBiome {
 // 森・草原はヘルパで書けるが、全く別のもの（霧・オブジェクトなど）は
 // SpecialBiome を直に書けばよい。型は平たいまま残してある。
 export const SPECIAL_BIOMES: SpecialBiome[] = [
-  forest('autumn', 0.035, 0x9a7842, KIND_AUTUMN), // 永遠の秋。落ち葉色 × オレンジ金の木
-  forest('sakura', 0.03, 0xc9a7b0, KIND_SAKURA), // 桜。淡い桃色 × 桃色の木
-  meadow('blue-meadow', 0.02, 0x6f8fb0), // 青い草原
-  meadow('violet-meadow', 0.02, 0x9a8fc0), // 薄紫の草原（夕暮れ色）
+  forest('autumn', 0.045, 0xa27a3b, KIND_AUTUMN), // 永遠の秋。落ち葉色 × オレンジ金の木
+  forest('sakura', 0.04, 0xcba3b3, KIND_SAKURA), // 桜。淡い桃色 × 桃色の木
+  meadow('blue-meadow', 0.0275, 0x668fb4), // 青い草原
+  meadow('violet-meadow', 0.0275, 0x9286bd), // 薄紫の草原（夕暮れ色）
 ];
 
 export interface SpecialHit {
@@ -110,7 +110,7 @@ export function specialAt(x: number, z: number, edgeNoise: Noise2D, seedSalt: nu
   // 升目の中で島の中心を少しずらす。升目の中央固定だと並びが読める。
   const centerX = (cx + 0.3 + hash2(cx, cz, (s1 + 1) >>> 0) * 0.4) * CELL;
   const centerZ = (cz + 0.3 + hash2(cx, cz, (s1 + 2) >>> 0) * 0.4) * CELL;
-  const radius = CELL * (0.26 + hash2(cx, cz, (s1 + 3) >>> 0) * 0.12);
+  const radius = CELL * (0.28 + hash2(cx, cz, (s1 + 3) >>> 0) * 0.12);
 
   const d = Math.hypot(x - centerX, z - centerZ);
   // 縁を波打たせる。半径をノイズで伸び縮みさせるだけ。

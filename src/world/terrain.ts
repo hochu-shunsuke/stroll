@@ -83,8 +83,8 @@ export const STEEPEST_LANDFORM_SLOPE =
 const SP_BASE: readonly (readonly [number, number, number])[] = [
   [-1.0, -58, 0],
   [-0.42, -30, 0],
-  [-0.16, -7, 0],
-  [-0.05, 3, 0], // 渚。海岸の接線は変えず、海陸の割合を保つ
+  [-0.24, -7, 0],
+  [-0.13, 3, 0], // 渚を外洋側へ寄せ、島ではなく大きな陸塊を主役にする
   [0.04, 10, 0],
   [0.216, 16, 57], // 低地の平らさを残しつつ、内陸の上りへ接線をつなぐ
   [0.442, 58, 174],
@@ -136,9 +136,29 @@ const SP_RELIEF: readonly (readonly [number, number])[] = [
  * 細い等高線なので山が針になる（一度 333m・山体 100m の塔ができた。
  * 山頂から 100m 離れただけで 130m まで落ちた）。
  */
-const PEAK_MASSIF = 155;
+const PEAK_MASSIF = 100;
 /** その上に尾根の頂上だけをさらに尖らせる（m）。こちらは狭くてよい。 */
-const PEAK_SPIRE = 65;
+const PEAK_SPIRE = 32;
+/**
+ * 山塊より広く、内陸の骨格を持ち上げる丘陵〜高原（m）。
+ *
+ * 海を減らすだけでは新しい陸地の多くが低地になり、かえって平べったく見える。
+ * 2 オクターブの大陸度と侵食度だけで km 単位の土台を作り、その上に従来の
+ * 山塊と頂上を載せる。細かいノイズを使わないので、突起ではなく地塊になる。
+ */
+const UPLAND_RISE = 54;
+/**
+ * 希少な山地を「一点の峰」ではなく「山塊 → 尾根 → 峰」の順に組み立てる。
+ *
+ * RUGGED_SHOULDER は km 単位の広い土台、RUGGED_RIDGE はその中を何本も走る尾根。
+ * PEAK_* は最後の頂上だけを担当する。広い層を先に置くことで、最高峰から
+ * 500m 離れても中腹が続き、平地から針が一本だけ出る形を避ける。
+ */
+const RUGGED_SHOULDER = 34;
+const RUGGED_RIDGE = 24;
+const RUGGED_CONT: [number, number] = [0.16, 0.5];
+const RUGGED_ERO: [number, number] = [0, -0.54];
+const RUGGED_PV: [number, number] = [-0.4, 0.66];
 /**
  * 内陸らしさ・侵食の少なさ・尾根の頂上、それぞれの効き始めと効き切り。
  *
@@ -359,7 +379,7 @@ export const STEEPEST_RIVER_BANK =
 // 川の判定に使い回す。1 回ごとに配列を作らないため。
 const RD = new Float32Array(3);
 
-// 落ち着いた、彩度を抑えた自然の色。
+// 落ち着いた自然色を保ちつつ、遠目にも気候帯が読める程度に色相を離す。
 const C_SEABED = srgb(0x4d5a52);
 const C_SAND = srgb(0xcbbd97);
 const C_ROCK = srgb(0x878175);
@@ -384,17 +404,17 @@ const MOIST_STOPS = [0.15, 0.42, 0.66] as const;
 // [湿り気の段 * 3 + 気温の段]。気温は寒→温→暑、湿り気は乾→中→湿。
 const CLIMATE = [
   // 乾
-  srgb(0x8f948a), // 寒・乾: ツンドラ（色あせた灰緑）
-  srgb(0xa9b273), // 温・乾: 乾いた草原
-  srgb(0xcfc399), // 暑・乾: 砂漠
+  srgb(0x87958d), // 寒・乾: ツンドラ（青みのある灰緑）
+  srgb(0xb4b56d), // 温・乾: 乾いた草原（黄緑）
+  srgb(0xd5bd82), // 暑・乾: 砂漠（明るい黄土）
   // 中
-  srgb(0x6f8069), // 寒・中: タイガ（暗い青緑）
-  srgb(0x74904f), // 温・中: 森
-  srgb(0xb0a061), // 暑・中: サバンナ（金茶）
+  srgb(0x58756b), // 寒・中: タイガ（暗い青緑）
+  srgb(0x6f9850), // 温・中: 森
+  srgb(0xb8974e), // 暑・中: サバンナ（金茶）
   // 湿
   C_SNOW, //         寒・湿: 雪
-  srgb(0x50733f), // 温・湿: 深い森
-  srgb(0x4f8437), // 暑・湿: みずみずしい密林
+  srgb(0x427744), // 温・湿: 深い森（深い緑）
+  srgb(0x3f8e42), // 暑・湿: みずみずしい密林
 ] as const;
 
 /** 段の並びの中で t がどの区間に居るかと、その中の位置（smoothstep 済み）。 */
@@ -718,6 +738,18 @@ export class Terrain {
     const massif =
       smoothstep(PEAK_CONT[0], PEAK_CONT[1], contBroad) *
       smoothstep(PEAK_ERO[0], PEAK_ERO[1], eroBroad);
+    const upland =
+      smoothstep(0.08, 0.46, contBroad) *
+      smoothstep(0.02, -0.5, eroBroad);
+    const rugged =
+      smoothstep(RUGGED_CONT[0], RUGGED_CONT[1], contBroad) *
+      smoothstep(RUGGED_ERO[0], RUGGED_ERO[1], eroBroad);
+    h += upland * UPLAND_RISE;
+    // 広い肩の中へ複数の尾根を通す。pv は連結した尾根と谷の網なので、
+    // 一個の放射状の山ではなく、谷を挟んだ複数の峰になる。
+    h +=
+      rugged *
+      (RUGGED_SHOULDER + smoothstep(RUGGED_PV[0], RUGGED_PV[1], pv) * RUGGED_RIDGE);
     if (massif > 0) {
       h += massif * PEAK_MASSIF;
       h += massif * smoothstep(PEAK_PV[0], PEAK_PV[1], pv) * PEAK_SPIRE;
@@ -760,7 +792,12 @@ export class Terrain {
     // ＝ 台地が周りより低い穴になっていた。山塊を足すと、山の上の台地は
     // 山を削らずに「肩」になる。
     const rise = mix(PLATEAU_RISE_MIN, PLATEAU_RISE_MAX, lf.variant);
-    const top = base + massif * PEAK_MASSIF + rise;
+    const top =
+      base +
+      upland * UPLAND_RISE +
+      rugged * RUGGED_SHOULDER +
+      massif * PEAK_MASSIF +
+      rise;
 
     // **縁の幅を落差に比例させる。** 幅が固定だと、落差が大きい縁だけが
     // そのぶん急になって壁になる。比例させると落差が何メートルでも

@@ -8,6 +8,8 @@ import {
   KIND_BROADLEAF_TALL,
   KIND_BROADLEAF_WIDE,
   KIND_BUSH,
+  KIND_DEAD,
+  KIND_PALM,
   KIND_PINE,
   KIND_PINE_OLD,
   KIND_PINE_YOUNG,
@@ -63,6 +65,13 @@ interface KindSpec {
    * 空から見たときに一番効く。
    */
   giantChance?: number;
+  /** 開始地点の視界を塞ぐ高さのもの。低木と岩は false のまま。 */
+  blocksSpawn?: boolean;
+  /**
+   * 頂点色に掛ける気候ごとの色味。形だけでなく色も土地に従わせる。
+   * 1 を基準にした倍率で、派手な塗り替えではなくわずかな方向付けに使う。
+   */
+  tint?: readonly [number, number, number];
   /** 置くならスケールを、置かないなら 0 を返す。 */
   place(ctx: PlaceContext): number;
 }
@@ -72,6 +81,7 @@ interface KindSpec {
 // ここを 3.4 にすると実際には 5.7 倍まで伸びて記念樹みたいになる（一度なった）。
 const GIANT_MIN = 1.55;
 const GIANT_MAX = 2.05;
+const DEFAULT_TINT = [1, 1, 1] as const;
 
 /**
  * 気候で決まる普通の植生。
@@ -88,6 +98,8 @@ const CLIMATE_SPECS: KindSpec[] = [
     salt: 1301,
     maxLod: 1,
     giantChance: 0.012,
+    blocksSpawn: true,
+    tint: [0.98, 1.08, 0.9],
     // ctx.slope は heightAt を 3 回呼ぶ。安い判定で落としてから最後に見ること。
     place: (c) => {
       if (c.h < 3.2 || c.h > 52) return 0;
@@ -106,6 +118,8 @@ const CLIMATE_SPECS: KindSpec[] = [
     salt: 4409,
     maxLod: 1,
     giantChance: 0.01,
+    blocksSpawn: true,
+    tint: [0.86, 1.0, 1.06],
     place: (c) => {
       if (c.h < 6 || c.h > 96) return 0;
       const climate = smoothstep(0.22, 0.55, c.moisture) * band(c.temp, 0.12, 0.34, 0.6);
@@ -113,6 +127,47 @@ const CLIMATE_SPECS: KindSpec[] = [
       if (c.r > density) return 0;
       if (c.slope > 0.5) return 0;
       return 0.8 + ((c.r * 613) % 1) * 0.7;
+    },
+  },
+  {
+    // 椰子: 暑く湿った低地。既にある形を密林の目印として使う。
+    kinds: [KIND_PALM],
+    spacing: 13,
+    salt: 5519,
+    maxLod: 1,
+    giantChance: 0.006,
+    blocksSpawn: true,
+    tint: [0.95, 1.1, 0.82],
+    place: (c) => {
+      if (c.h < 2.8 || c.h > 42) return 0;
+      const heat = smoothstep(0.62, 0.82, c.temp);
+      const wet = smoothstep(0.44, 0.7, c.moisture);
+      // 一面へ均等に撒かず、林と空き地をはっきり分ける。形の強い椰子は
+      // 広葉樹と同じ密度で並べると、一本ずつではなく模様として見えてしまう。
+      const clump = mix(0.14, 1.25, smoothstep(0.68, 1.32, c.grove));
+      const density =
+        heat * wet * clump * 0.42 * (1 - c.special.strength);
+      if (c.r > density) return 0;
+      if (c.slope > 0.38) return 0;
+      return 0.78 + ((c.r * 419) % 1) * 0.48;
+    },
+  },
+  {
+    // 枯れ木: 暑く乾いた草原〜砂漠。空白だけだった乾燥帯に輪郭を与える。
+    kinds: [KIND_DEAD],
+    spacing: 18,
+    salt: 6323,
+    maxLod: 1,
+    blocksSpawn: true,
+    tint: [1.08, 0.98, 0.78],
+    place: (c) => {
+      if (c.h < 2.8 || c.h > 64) return 0;
+      const heat = smoothstep(0.52, 0.78, c.temp);
+      const dry = 1 - smoothstep(0.13, 0.34, c.moisture);
+      const density = heat * dry * 0.3 * (1 - c.special.strength);
+      if (c.r > density) return 0;
+      if (c.slope > 0.44) return 0;
+      return 0.72 + ((c.r * 733) % 1) * 0.55;
     },
   },
   {
@@ -125,6 +180,7 @@ const CLIMATE_SPECS: KindSpec[] = [
     spacing: 17,
     salt: 7717,
     maxLod: 1,
+    tint: [1.02, 1, 0.96],
     place: (c) => {
       if (c.h < 1.0) return 0;
       // 密度は最大でも (0.05+0.75+0.2)*0.75 = 0.75。先に落として崖の判定を省く。
@@ -142,6 +198,7 @@ const CLIMATE_SPECS: KindSpec[] = [
     spacing: 5,
     salt: 2237,
     maxLod: 0,
+    tint: [0.96, 1.08, 0.84],
     place: (c) => {
       if (c.h < 2.4 || c.h > 60) return 0;
       const climate = smoothstep(0.28, 0.6, c.moisture) * band(c.temp, 0.35, 0.6, 0.92);
@@ -167,6 +224,7 @@ const SPECIAL_SPECS: KindSpec[] = SPECIAL_BIOMES.flatMap((biome, index) => {
       salt: 9001 + index * 13,
       maxLod: 1,
       giantChance: 0.012,
+      blocksSpawn: true,
       place: (c) => {
         // 自分の宝物区画の中だけ。強さが弱い縁ほどまばらに。
         if (c.special.index !== index) return 0;
@@ -187,6 +245,51 @@ const SPECS: KindSpec[] = [...CLIMATE_SPECS, ...SPECIAL_SPECS];
  */
 function band(v: number, lo: number, mid: number, hi: number): number {
   return v < mid ? smoothstep(lo, mid, v) : smoothstep(hi, mid, v);
+}
+
+/**
+ * 開始地点のまわりに、視界を塞ぐ木が生えるか。
+ *
+ * 候補格子・乱数・各 biome の place() を本番配置と共有する。別の簡易判定を
+ * 書くと「空き地を選んだつもりなのに木の中」という食い違いが再発するため。
+ * 湿り気だけはチャンク補間前の値だが、波長 1,100m 以上なので半径数mでは同じ。
+ */
+export function hasTallVegetationNear(
+  terrain: Terrain,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+): boolean {
+  const r2 = radius * radius;
+  for (const spec of SPECS) {
+    if (!spec.blocksSpawn) continue;
+    const g0 = Math.floor((centerX - radius) / spec.spacing);
+    const g1 = Math.floor((centerX + radius) / spec.spacing);
+    const k0 = Math.floor((centerZ - radius) / spec.spacing);
+    const k1 = Math.floor((centerZ + radius) / spec.spacing);
+    for (let gx = g0; gx <= g1; gx++) {
+      for (let gz = k0; gz <= k1; gz++) {
+        const x = (gx + hash2(gx, gz, spec.salt + 1)) * spec.spacing;
+        const z = (gz + hash2(gx, gz, spec.salt + 2)) * spec.spacing;
+        if ((x - centerX) ** 2 + (z - centerZ) ** 2 >= r2) continue;
+
+        const h = terrain.heightAt(x, z);
+        if (h < 0.8 || h < terrain.waterLevelAt(x, z) + 0.6) continue;
+        CTX.h = h;
+        CTX.r = hash2(gx, gz, spec.salt);
+        CTX.moisture = terrain.moistureAt(x, z);
+        CTX.temp = terrain.temperatureAt(x, z, h);
+        CTX.special = terrain.specialAt(x, z);
+        CTX.grove = terrain.groveAt(x, z);
+        CTX._t = terrain;
+        CTX._x = x;
+        CTX._z = z;
+        CTX._ready = false;
+        if (spec.place(CTX) > 0) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** 3 点差分で地面の傾きを測り、あわせて「上の崖の急さ」も出す。 */
@@ -386,9 +489,10 @@ export function buildScatterData(
         // 並んで壁紙に見えていた。黄緑〜青緑に散らすと森らしくなる。
         const bright = 0.82 + hash2(gx, gz, spec.salt + 6) * 0.36;
         const hue = hash2(gx, gz, spec.salt + 7) - 0.5;
-        colors[count * 3] = bright * (1 + hue * 0.16);
-        colors[count * 3 + 1] = bright;
-        colors[count * 3 + 2] = bright * (1 - hue * 0.18);
+        const tint = spec.tint ?? DEFAULT_TINT;
+        colors[count * 3] = bright * tint[0] * (1 + hue * 0.16);
+        colors[count * 3 + 1] = bright * tint[1];
+        colors[count * 3 + 2] = bright * tint[2] * (1 - hue * 0.18);
         counts[v] = count + 1;
       }
     }

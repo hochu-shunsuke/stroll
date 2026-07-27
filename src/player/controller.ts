@@ -92,6 +92,12 @@ export class Player {
     return this.terrain.heightOnGrid(x, z, this.groundStep);
   }
 
+  /** 海または内陸湖の水面。水のない陸では海面を返す。 */
+  private waterSurfaceAt(x: number, z: number): number {
+    const lake = this.terrain.waterLevelAt(x, z);
+    return Number.isFinite(lake) ? lake : SEA_LEVEL;
+  }
+
   onKey(code: string, down: boolean, repeat = false): void {
     if (!down) {
       // 前進をやめたらダッシュも解除する（Minecraft と同じ感覚）。
@@ -168,7 +174,9 @@ export class Player {
   /** 水に浸かっているか（UI と移動速度の切り替えに使う）。 */
   get swimming(): boolean {
     if (this.flying) return false;
-    return this.groundAt(this.position.x, this.position.z) < SEA_LEVEL - SWIM_DEPTH;
+    const x = this.position.x;
+    const z = this.position.z;
+    return this.groundAt(x, z) < this.waterSurfaceAt(x, z) - SWIM_DEPTH;
   }
 
   update(dt: number, camera: THREE.PerspectiveCamera): void {
@@ -298,8 +306,9 @@ export class Player {
     const moved = Math.hypot(this.position.x - fromX, this.position.z - fromZ);
 
     if (swimming) {
-      // 水面に浮かぶ。海底を歩かせない。
-      const surface = SEA_LEVEL + 0.35;
+      // 海でも内陸湖でも、その場所の水面に浮かぶ。湖を海抜 0m と決め打ちすると、
+      // 高い湖の底を歩いてしまう。
+      const surface = this.waterSurfaceAt(this.position.x, this.position.z) + 0.35;
       this.position.y += (surface - this.position.y) * (1 - Math.exp(-6 * dt));
       this.verticalVelocity = 0;
       this.grounded = false;
