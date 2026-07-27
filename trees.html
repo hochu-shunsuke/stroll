@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>木の見本帳（開発用）</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #cfd8d4; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #labels { position: fixed; inset: 0; pointer-events: none; font: 12px/1.4 ui-monospace, monospace; }
+      .lbl {
+        position: absolute; transform: translate(-50%, 0);
+        color: #22302a; text-shadow: 0 1px 2px rgba(255,255,255,.8);
+        white-space: nowrap; text-align: center;
+      }
+      .lbl b { display: block; font-size: 13px; }
+      .lbl span { opacity: .65; }
+      #help {
+        position: fixed; left: 12px; top: 12px; font: 12px/1.6 ui-monospace, monospace;
+        color: #22302a; background: rgba(255,255,255,.7); padding: 8px 12px; border-radius: 4px;
+      }
+      #help kbd { background: #22302a; color: #fff; padding: 0 4px; border-radius: 2px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="labels"></div>
+    <div id="help">
+      木の見本帳（開発用・本番には出ません）<br />
+      ドラッグ = 回す ／ ホイール = 寄る ／ <kbd>R</kbd> = 種を振り直す
+    </div>
+    <script type="module" src="/src/dev/trees.ts"></script>
+  </body>
+</html>

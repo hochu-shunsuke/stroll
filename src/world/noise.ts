@@ -284,6 +284,45 @@ export function fbmEroded(
 }
 
 /**
+ * 値と傾きを同時に返す fBm。out に [値, ∂/∂x, ∂/∂y] を書き込む。
+ *
+ * 「ノイズがゼロを横切る線」を一定の幅で取り出すために要る。
+ * 値だけで `|n| < T` と切ると、傾きが緩い所で帯が異常に太くなる
+ * （実測で中央 4m の帯が、場所によっては数百 m に広がる）。
+ * `|n| / |傾き|` はゼロ線までのおおよその距離（m）なので、これで切れば幅が揃う。
+ */
+export function fbmD(
+  n: Noise2D,
+  x: number,
+  y: number,
+  octaves: number,
+  freq: number,
+  out: Float32Array,
+  lacunarity = 2.0,
+  gain = 0.5,
+): void {
+  let amp = 1;
+  let sum = 0;
+  let norm = 0;
+  let dx = 0;
+  let dy = 0;
+  let f = freq;
+  for (let o = 0; o < octaves; o++) {
+    n.noiseD(x * f, y * f, ND);
+    sum += amp * ND[0];
+    // 入力を f 倍しているので、外側の座標に対する傾きは f 倍になる。
+    dx += amp * ND[1] * f;
+    dy += amp * ND[2] * f;
+    norm += amp;
+    amp *= gain;
+    f *= lacunarity;
+  }
+  out[0] = sum / norm;
+  out[1] = dx / norm;
+  out[2] = dy / norm;
+}
+
+/**
  * 折れ点を持つ区分曲線。ノイズの値を高さや振れ幅へ写す。
  *
  * **なぜ掛け算ではなくこれなのか。**

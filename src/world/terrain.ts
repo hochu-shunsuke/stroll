@@ -188,6 +188,10 @@ const RAIN_STEP = 260;
 /** 風上の山が自分より何 m 高ければ影になり始めるか / 乾ききるか。 */
 const RAIN_LOW = 22;
 const RAIN_HIGH = 78;
+/** 森のかたまりの下限と振れ幅。下限 + 振れ幅/2 が 1.0 になるように取る。 */
+const GROVE_FLOOR = 0.42;
+const GROVE_RANGE = 1.18;
+
 /** 雨陰で湿り気が最大どれだけ下がるか。1.0 にすると砂漠しか出なくなる。 */
 const RAIN_STRENGTH = 0.5;
 
@@ -239,6 +243,7 @@ export class Terrain {
   private nRidge: Noise2D;
   private nDetail: Noise2D;
   private nWarp: Noise2D;
+  private nGrove: Noise2D;
   private nMoisture: Noise2D;
   private nTemperature: Noise2D;
   private nSpecialEdge: Noise2D;
@@ -257,6 +262,7 @@ export class Terrain {
     this.nRidge = new Noise2D(c);
     this.nDetail = new Noise2D((a ^ 0x9e3779b9) >>> 0);
     this.nWarp = new Noise2D(d);
+    this.nGrove = new Noise2D((b ^ 0x2545f491) >>> 0);
     this.nMoisture = new Noise2D((c ^ 0xc2b2ae35) >>> 0);
     this.nTemperature = new Noise2D((d ^ 0x27d4eb2f) >>> 0);
     this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
@@ -344,6 +350,25 @@ export class Terrain {
    * 湿り気 0..1。ノイズに雨陰を重ねる。
    * 自分より高い山が風上にあるほど乾く。おかげで山脈の東西で景色が変わる。
    */
+  /**
+   * 森のかたまり 0..1.4。植生の密度に掛ける。
+   *
+   * これが無いと、木は格子点ごとに独立にサイコロを振るだけになる。実測で
+   * 20m マスあたりの分散/平均が 0.78 ── **ランダム（1.0）より均一**で、
+   * 森ではなく壁紙に見えていた。研究でも、一様配置より競争モデル（同種が
+   * 固まる）の方が信じられると出ていて、その差は**空から見たとき**に一番出る。
+   *
+   * **平均が 1.0 になるように下限と倍率を取ること。** 0 から始めると
+   * かたまりが濃くなる代わりに全体の本数まで減る（一度これで木が半減し、
+   * 木のほぼ無いチャンクが 24% → 42% になった）。空き地にも下限ぶんは残す。
+   *
+   * 波長は約 110m ＝ 歩いて 20 秒で森を抜ける大きさ。
+   */
+  groveAt(x: number, z: number): number {
+    const n = fbm(this.nGrove, x, z, 2, 0.009) * 0.5 + 0.5;
+    return GROVE_FLOOR + smoothstep(0.28, 0.74, n) * GROVE_RANGE;
+  }
+
   moistureAt(x: number, z: number): number {
     const base = fbm(this.nMoisture, x, z, 3, 0.0009) * 0.5 + 0.5;
     return clamp(base - this.rainShadowAt(x, z) * RAIN_STRENGTH, 0, 1);

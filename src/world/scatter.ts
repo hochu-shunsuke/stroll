@@ -1,9 +1,18 @@
 import { hash2 } from '../core/rng';
-import { clamp, smoothstep } from './noise';
+import { clamp, mix, smoothstep } from './noise';
 import { CHUNK_SIZE } from './chunk';
-import { SPECIAL_BIOMES, type SpecialHit } from './special';
+import { NO_SPECIAL, SPECIAL_BIOMES, type SpecialHit } from './special';
 import type { Terrain } from './terrain';
-import { KIND_BROADLEAF, KIND_BUSH, KIND_PINE, KIND_ROCK } from './vegetationKinds';
+import {
+  KIND_BROADLEAF,
+  KIND_BROADLEAF_TALL,
+  KIND_BROADLEAF_WIDE,
+  KIND_BUSH,
+  KIND_PINE,
+  KIND_PINE_OLD,
+  KIND_PINE_YOUNG,
+  KIND_ROCK,
+} from './vegetationKinds';
 
 export { KIND_BROADLEAF, KIND_BUSH, KIND_PINE, KIND_ROCK } from './vegetationKinds';
 
@@ -15,27 +24,54 @@ export interface ScatterBatch {
   colors: Float32Array;
 }
 
+/**
+ * place() に渡る文脈。
+ *
+ * **slope と talus は触ると heightAt が 3 回走る。** 安い判定（標高・気候・
+ * かたまり・乱数）で先に落としてから、最後に見ること。分割代入で受け取ると
+ * 全部その場で評価されてしまうので、`c.slope` の形で使う。
+ */
 interface PlaceContext {
-  h: number;
-  slope: number;
-  temp: number;
-  moisture: number;
+  readonly h: number;
+  readonly slope: number;
+  readonly temp: number;
+  readonly moisture: number;
   /** その場所の宝物区画（なければ index < 0）。 */
-  special: SpecialHit;
+  readonly special: SpecialHit;
+  /** 森のかたまり。密度に掛けると塊と空き地ができる。 */
+  readonly grove: number;
+  /** 頭上の崖の急さ。0 なら平ら、1 以上なら上に崖がある。 */
+  readonly talus: number;
   /** この候補の乱数 0..1。 */
-  r: number;
+  readonly r: number;
 }
 
 interface KindSpec {
-  kind: number;
+  /**
+   * この spec が出す形の一覧。候補ごとにハッシュで 1 つ選ぶ。
+   * 1 つしか無いと、同じ形が何百本も並んで壁紙に見える。
+   */
+  kinds: number[];
   /** 配置候補の格子間隔。 */
   spacing: number;
   salt: number;
   /** この LOD 以下のチャンクにだけ生やす。 */
   maxLod: number;
+  /**
+   * たまに現れる巨木の割合（0 なら出ない）。
+   * 同じ大きさばかりだと並木に見えるので、スケールの対比を作る。
+   * 空から見たときに一番効く。
+   */
+  giantChance?: number;
   /** 置くならスケールを、置かないなら 0 を返す。 */
   place(ctx: PlaceContext): number;
 }
+
+/** 巨木の倍率。 */
+// 基準の大きさ（0.75〜1.35）と縦の伸び（0.85〜1.25）にも掛かるので、
+// ここを 3.4 にすると実際には 5.7 倍まで伸びて記念樹みたいになる（一度なった）。
+const GIANT_MIN = 1.55;
+const GIANT_MAX = 2.05;
 
 /**
  * 気候で決まる普通の植生。
@@ -44,57 +80,73 @@ interface KindSpec {
 const CLIMATE_SPECS: KindSpec[] = [
   {
     // 広葉樹: 温帯〜暖帯の湿った所。寒い地方と砂漠には生えない。
-    kind: KIND_BROADLEAF,
+    kinds: [KIND_BROADLEAF, KIND_BROADLEAF_TALL, KIND_BROADLEAF_WIDE],
     spacing: 7,
     salt: 1301,
     maxLod: 1,
-    place: ({ h, slope, temp, moisture, special, r }) => {
-      if (h < 3.2 || h > 52 || slope > 0.42) return 0;
-      const climate = smoothstep(0.34, 0.68, moisture) * band(temp, 0.4, 0.62, 0.9);
-      const density = climate * (1 - smoothstep(34, 52, h)) * 0.9 * (1 - special.strength);
-      if (r > density) return 0;
-      return 0.75 + ((r * 977) % 1) * 0.6;
+    giantChance: 0.012,
+    // ctx.slope は heightAt を 3 回呼ぶ。安い判定で落としてから最後に見ること。
+    place: (c) => {
+      if (c.h < 3.2 || c.h > 52) return 0;
+      const climate = smoothstep(0.34, 0.68, c.moisture) * band(c.temp, 0.4, 0.62, 0.9);
+      const density =
+        climate * c.grove * (1 - smoothstep(34, 52, c.h)) * 0.9 * (1 - c.special.strength);
+      if (c.r > density) return 0;
+      if (c.slope > 0.42) return 0;
+      return 0.75 + ((c.r * 977) % 1) * 0.6;
     },
   },
   {
     // 針葉樹: 涼しい所。寒帯や山の中腹を担う。
-    kind: KIND_PINE,
+    kinds: [KIND_PINE, KIND_PINE_YOUNG, KIND_PINE_OLD],
     spacing: 8,
     salt: 4409,
     maxLod: 1,
-    place: ({ h, slope, temp, moisture, special, r }) => {
-      if (h < 6 || h > 96 || slope > 0.5) return 0;
-      const climate = smoothstep(0.22, 0.55, moisture) * band(temp, 0.12, 0.34, 0.6);
-      const density = climate * 0.85 * (1 - special.strength);
-      if (r > density) return 0;
-      return 0.8 + ((r * 613) % 1) * 0.7;
+    giantChance: 0.01,
+    place: (c) => {
+      if (c.h < 6 || c.h > 96) return 0;
+      const climate = smoothstep(0.22, 0.55, c.moisture) * band(c.temp, 0.12, 0.34, 0.6);
+      const density = climate * c.grove * 0.85 * (1 - c.special.strength);
+      if (c.r > density) return 0;
+      if (c.slope > 0.5) return 0;
+      return 0.8 + ((c.r * 613) % 1) * 0.7;
     },
   },
   {
-    // 岩: 気候によらず、急斜面と高所に転がる。宝物区画でも残す。
-    kind: KIND_ROCK,
+    // 岩: 崖の下に落ちて溜まる（talus）。宝物区画でも残す。
+    //
+    // 以前は「傾きが急な所」に置くだけだった。それだと岩が崖の"面"に貼り付き、
+    // なぜそこにあるのか説明がつかない。実際の転石は上の崖から落ちてきて、
+    // 傾きが緩んだ所に溜まる。talus（上り方向の崖の急さ）を見るとそれが出る。
+    kinds: [KIND_ROCK],
     spacing: 17,
     salt: 7717,
     maxLod: 1,
-    place: ({ h, slope, r }) => {
-      if (h < 1.0) return 0;
-      const density = (0.12 + smoothstep(0.3, 0.7, slope) * 0.5 + smoothstep(50, 90, h) * 0.3) * 0.6;
-      if (r > density) return 0;
-      return 0.6 + ((r * 331) % 1) * 2.4;
+    place: (c) => {
+      if (c.h < 1.0) return 0;
+      // 密度は最大でも (0.05+0.75+0.2)*0.6 = 0.6。先に落として崖の判定を省く。
+      if (c.r > 0.6) return 0;
+      // 上に崖があり、かつ自分はそこまで急でない ＝ 溜まり場。
+      const pile = smoothstep(0.5, 1.4, c.talus) * (1 - smoothstep(0.45, 0.85, c.slope));
+      const density = (0.05 + pile * 0.75 + smoothstep(50, 90, c.h) * 0.2) * 0.6;
+      if (c.r > density) return 0;
+      return 0.6 + ((c.r * 331) % 1) * 2.4;
     },
   },
   {
     // 低木: 暖かく湿った所の下草。砂漠と寒帯には出さない。
-    kind: KIND_BUSH,
+    kinds: [KIND_BUSH],
     spacing: 5,
     salt: 2237,
     maxLod: 0,
-    place: ({ h, slope, temp, moisture, special, r }) => {
-      if (h < 2.4 || h > 60 || slope > 0.55) return 0;
-      const climate = smoothstep(0.28, 0.6, moisture) * band(temp, 0.35, 0.6, 0.92);
-      const density = climate * 0.55 * (1 - special.strength);
-      if (r > density) return 0;
-      return 0.7 + ((r * 149) % 1) * 0.9;
+    place: (c) => {
+      if (c.h < 2.4 || c.h > 60) return 0;
+      const climate = smoothstep(0.28, 0.6, c.moisture) * band(c.temp, 0.35, 0.6, 0.92);
+      // 下草は森の中で濃い。かたまりの効きは木より弱くする（空き地にも少し残す）。
+      const density = climate * mix(1, c.grove, 0.65) * 0.55 * (1 - c.special.strength);
+      if (c.r > density) return 0;
+      if (c.slope > 0.55) return 0;
+      return 0.7 + ((c.r * 149) % 1) * 0.9;
     },
   },
 ];
@@ -107,16 +159,18 @@ const SPECIAL_SPECS: KindSpec[] = SPECIAL_BIOMES.flatMap((biome, index) => {
   if (biome.treeKind === null) return [];
   return [
     {
-      kind: biome.treeKind,
+      kinds: [biome.treeKind],
       spacing: biome.treeSpacing,
       salt: 9001 + index * 13,
       maxLod: 1,
-      place: ({ h, slope, special, r }) => {
+      giantChance: 0.012,
+      place: (c) => {
         // 自分の宝物区画の中だけ。強さが弱い縁ほどまばらに。
-        if (special.index !== index) return 0;
-        if (h < 1.5 || slope > 0.5) return 0;
-        if (r > biome.treeDensity * special.strength) return 0;
-        return 0.8 + ((r * 811) % 1) * 0.6;
+        if (c.special.index !== index) return 0;
+        if (c.h < 1.5) return 0;
+        if (c.r > biome.treeDensity * c.special.strength * mix(1, c.grove, 0.6)) return 0;
+        if (c.slope > 0.5) return 0;
+        return 0.8 + ((c.r * 811) % 1) * 0.6;
       },
     },
   ];
@@ -132,13 +186,71 @@ function band(v: number, lo: number, mid: number, hi: number): number {
   return v < mid ? smoothstep(lo, mid, v) : smoothstep(hi, mid, v);
 }
 
-/** 3 点差分で地面の傾き（0=平ら, 1=垂直に近い）を測る。 */
-function slopeAt(t: Terrain, x: number, z: number, h: number): number {
+/** 3 点差分で地面の傾きを測り、あわせて「上の崖の急さ」も出す。 */
+function slopeAndTalus(t: Terrain, x: number, z: number, h: number, out: Float32Array): void {
   const d = 2.5;
   const dx = (t.heightAt(x + d, z) - h) / d;
   const dz = (t.heightAt(x, z + d) - h) / d;
-  return clamp(Math.hypot(dx, dz) / 1.6, 0, 1);
+  const g = Math.hypot(dx, dz);
+  out[0] = clamp(g / 1.6, 0, 1);
+  if (g < 1e-4) {
+    out[1] = 0;
+    return;
+  }
+  // 上り方向へ 14m 進んだ先がどれだけ高いか ＝ 頭上の崖の急さ。
+  // 転石はここから落ちてくる。
+  const up = t.heightAt(x + (dx / g) * TALUS_LOOK, z + (dz / g) * TALUS_LOOK);
+  out[1] = clamp((up - h) / TALUS_LOOK, 0, 2);
 }
+
+/** 頭上の崖を探す距離（m）。 */
+const TALUS_LOOK = 14;
+
+/**
+ * 湿り気を引く格子の間隔（m）。chunk.ts の CLIMATE_STEP と同じ理由。
+ *
+ * 雨陰が入って moistureAt が 0.08μs → 3.79μs（40 倍）になった。植生は
+ * 1 チャンクで 3,311 回呼ぶので、これだけで 12.5ms かかっていた。
+ * 起動時の生成コストの 6 割が植生になり、初回表示が目に見えて遅くなった。
+ * 湿り気は波長 1,100m 以上でゆっくり変わるので、格子で引いて補間してよい。
+ */
+const CLIMATE_STEP = 24;
+
+// slopeAndTalus の受け皿。候補ごとに配列を作らないため。
+const ST = new Float32Array(2);
+
+/**
+ * place() に渡す文脈。使い回して割り当てを避ける。
+ *
+ * slope と talus は heightAt を 3 回呼ぶので、**参照されたときだけ**計算する。
+ * ほとんどの候補は密度の抽選で先に落ちるので、そこまで到達しない。
+ */
+const CTX = {
+  h: 0,
+  temp: 0,
+  moisture: 0,
+  special: NO_SPECIAL as SpecialHit,
+  grove: 0,
+  r: 0,
+  // 以下は遅延評価のための内部状態。
+  _t: null as Terrain | null,
+  _x: 0,
+  _z: 0,
+  _ready: false,
+  _calc(): void {
+    if (this._ready) return;
+    this._ready = true;
+    slopeAndTalus(this._t!, this._x, this._z, this.h, ST);
+  },
+  get slope(): number {
+    this._calc();
+    return ST[0];
+  },
+  get talus(): number {
+    this._calc();
+    return ST[1];
+  },
+};
 
 /**
  * Y 軸回転 → X 軸の微傾き → スケール、を合成した 4x4 行列を列優先で書き出す。
@@ -175,6 +287,30 @@ export function buildScatterData(
   const oz = cz * CHUNK_SIZE;
   const batches: ScatterBatch[] = [];
 
+  // 湿り気は粗い格子で引いて補間する（CLIMATE_STEP 参照）。
+  // 格子は CHUNK_SIZE を割り切るので、隣のチャンクと世界座標で一致する。
+  const cg = CHUNK_SIZE / CLIMATE_STEP;
+  const cw = cg + 1;
+  const mgrid = new Float32Array(cw * cw);
+  for (let j = 0; j < cw; j++) {
+    for (let i = 0; i < cw; i++) {
+      mgrid[j * cw + i] = terrain.moistureAt(ox + i * CLIMATE_STEP, oz + j * CLIMATE_STEP);
+    }
+  }
+  const moistureAt = (x: number, z: number) => {
+    const u = (x - ox) / CLIMATE_STEP;
+    const v = (z - oz) / CLIMATE_STEP;
+    const i = Math.min(cg - 1, Math.max(0, u | 0));
+    const j = Math.min(cg - 1, Math.max(0, v | 0));
+    const fu = u - i;
+    const fv = v - j;
+    const a = mgrid[j * cw + i];
+    const b = mgrid[j * cw + i + 1];
+    const c = mgrid[(j + 1) * cw + i];
+    const d = mgrid[(j + 1) * cw + i + 1];
+    return (a + (b - a) * fu) * (1 - fv) + (c + (d - c) * fu) * fv;
+  };
+
   for (const spec of SPECS) {
     if (lod > spec.maxLod) continue;
 
@@ -183,11 +319,18 @@ export function buildScatterData(
     const k0 = Math.floor(oz / spec.spacing);
     const k1 = Math.floor((oz + CHUNK_SIZE - 0.001) / spec.spacing);
 
+    // 形ごとに別の InstancedMesh になるので、配列も形ごとに持つ。
     // 上限いっぱいで確保し、最後に実数へ切り詰める。
     const cap = (g1 - g0 + 1) * (k1 - k0 + 1);
-    const matrices = new Float32Array(cap * 16);
-    const colors = new Float32Array(cap * 3);
-    let count = 0;
+    const nv = spec.kinds.length;
+    const mats: Float32Array[] = [];
+    const cols: Float32Array[] = [];
+    const counts: number[] = [];
+    for (let v = 0; v < nv; v++) {
+      mats.push(new Float32Array(cap * 16));
+      cols.push(new Float32Array(cap * 3));
+      counts.push(0);
+    }
 
     for (let gx = g0; gx <= g1; gx++) {
       for (let gz = k0; gz <= k1; gz++) {
@@ -199,12 +342,31 @@ export function buildScatterData(
         const h = terrain.heightAt(x, z);
         // 水面下と、明らかに条件外の場所は重い判定に入る前に落とす。
         if (h < 0.8) continue;
-        const moisture = terrain.moistureAt(x, z);
-        const temp = terrain.temperatureAt(x, z, h);
-        const slope = slopeAt(terrain, x, z, h);
-        const special = terrain.specialAt(x, z);
-        const scale = spec.place({ h, slope, temp, moisture, special, r });
+        CTX.h = h;
+        CTX.r = r;
+        CTX.moisture = moistureAt(x, z);
+        CTX.temp = terrain.temperatureAt(x, z, h);
+        CTX.special = terrain.specialAt(x, z);
+        CTX.grove = terrain.groveAt(x, z);
+        // 傾きと転石はここでは計算しない。place() が触ったときだけ求める。
+        CTX._t = terrain;
+        CTX._x = x;
+        CTX._z = z;
+        CTX._ready = false;
+        let scale = spec.place(CTX);
         if (scale <= 0) continue;
+
+        // たまに巨木。大きさが揃っていると並木に見えるので、対比を作る。
+        if (spec.giantChance) {
+          const g = hash2(gx, gz, spec.salt + 8);
+          if (g < spec.giantChance) scale *= mix(GIANT_MIN, GIANT_MAX, g / spec.giantChance);
+        }
+
+        // どの形にするか。同じ形ばかりだと壁紙に見える。
+        const v = nv === 1 ? 0 : Math.min(nv - 1, (hash2(gx, gz, spec.salt + 9) * nv) | 0);
+        const matrices = mats[v];
+        const colors = cols[v];
+        const count = counts[v];
 
         const yaw = hash2(gx, gz, spec.salt + 3) * Math.PI * 2;
         // わずかに傾いている方が並木らしくならず自然に見える。
@@ -212,20 +374,25 @@ export function buildScatterData(
         const sy = scale * (0.85 + hash2(gx, gz, spec.salt + 5) * 0.4);
         composeInto(matrices, count * 16, x - ox, h - 0.25, z - oz, yaw, tilt, scale, sy, scale);
 
-        const t = 0.86 + hash2(gx, gz, spec.salt + 6) * 0.3;
-        colors[count * 3] = t;
-        colors[count * 3 + 1] = t * (0.94 + hash2(gx, gz, spec.salt + 7) * 0.12);
-        colors[count * 3 + 2] = t * 0.93;
-        count++;
+        // 明るさに加えて色相も振る。以前は明度だけだったので、同じ緑が
+        // 並んで壁紙に見えていた。黄緑〜青緑に散らすと森らしくなる。
+        const bright = 0.82 + hash2(gx, gz, spec.salt + 6) * 0.36;
+        const hue = hash2(gx, gz, spec.salt + 7) - 0.5;
+        colors[count * 3] = bright * (1 + hue * 0.16);
+        colors[count * 3 + 1] = bright;
+        colors[count * 3 + 2] = bright * (1 - hue * 0.18);
+        counts[v] = count + 1;
       }
     }
 
-    if (count === 0) continue;
-    batches.push({
-      kind: spec.kind,
-      matrices: matrices.slice(0, count * 16),
-      colors: colors.slice(0, count * 3),
-    });
+    for (let v = 0; v < nv; v++) {
+      if (counts[v] === 0) continue;
+      batches.push({
+        kind: spec.kinds[v],
+        matrices: mats[v].slice(0, counts[v] * 16),
+        colors: cols[v].slice(0, counts[v] * 3),
+      });
+    }
   }
 
   return batches;
