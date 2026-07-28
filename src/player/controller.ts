@@ -16,7 +16,16 @@ export const EYE_HEIGHT = 1.68;
 const WALK_SPEED = 5.4;
 const SPRINT_SPEED = 10.5;
 const SWIM_SPEED = 3.2;
-const FLY_SPEED = 26;
+/** 空から地形を探す通常速度。PC・タッチで同じ値を使う。 */
+export const FLY_CRUISE_SPEED = 78;
+/** 遠くの地形へ移る高速飛行。 */
+export const FLY_BOOST_SPEED = 112;
+/** 視線と独立して上下するときの速さ。 */
+const FLY_VERTICAL_SPEED = 32;
+/** オートフライトが地形との間に保つ最低高度。 */
+const AUTO_CLEARANCE = 52;
+const AUTO_TURN_RATE = 1.05;
+const AUTO_LOOK_AHEAD = [70, 170, 320] as const;
 const GRAVITY = 26;
 const JUMP_SPEED = 7.2;
 /** 這い上がれる斜面の限界。水平 1 進む間に登れる高さ。 */
@@ -56,11 +65,21 @@ const STRIDE_WALK = 2.05;
 const STRIDE_SPRINT = 3.2;
 const STRIDE_SWIM = 1.5;
 
+export interface PlayerSnapshot {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  flying: boolean;
+}
+
 export class Player {
   readonly position = new THREE.Vector3();
   yaw = 0;
   pitch = 0;
   flying = false;
+  autoFlight = false;
 
   /** 足が地面に着いた瞬間に呼ばれる。0..1 の強さ付き。 */
   onFootstep: ((intensity: number) => void) | null = null;
@@ -79,7 +98,12 @@ export class Player {
   /** タッチのスティック。倒した量がそのまま速度になる。 */
   private axisX = 0;
   private axisY = 0;
-  private axisSprint = false;
+  /** 0=通常、1=全速。外周で滑らかに上がり、速度を段差にしない。 */
+  private axisBoost = 0;
+  private autoHeading = 0;
+  private autoAltitude = 0;
+  private cameraRoll = 0;
+  private readonly targetVelocity = new THREE.Vector3();
   private terrain: Terrain;
   private groundStep = LOD_STEPS[0];
 
@@ -98,7 +122,7 @@ export class Player {
     return Number.isFinite(lake) ? lake : SEA_LEVEL;
   }
 
-  onKey(code: string, down: boolean, repeat = false): void {
+  onKey(code: string, down: boolean, repeat = false, detectDoubleTap = true): void {
     if (!down) {
       // 前進をやめたらダッシュも解除する（Minecraft と同じ感覚）。
       if (code === 'KeyW' || code === 'ArrowUp') this.sprinting = false;
@@ -110,39 +134,59 @@ export class Player {
     if (!repeat) {
       const now = performance.now();
       const prev = this.lastTap.get(code) ?? -Infinity;
-      const doubleTapped = now - prev < DOUBLE_TAP_MS;
+      const doubleTapped = detectDoubleTap && now - prev < DOUBLE_TAP_MS;
       // 一度成立させたら記録を捨てる。三度押しで再発火させないため。
-      this.lastTap.set(code, doubleTapped ? -Infinity : now);
+      if (detectDoubleTap) this.lastTap.set(code, doubleTapped ? -Infinity : now);
 
       if (doubleTapped) {
         if (code === 'KeyW' || code === 'ArrowUp') this.sprinting = true;
-        if (code === 'Space') this.toggleFly();
+        if (code === 'Space') this.toggleFlying();
       }
-      if (code === 'KeyF') this.toggleFly();
+      if (code === 'KeyF') this.toggleFlying();
+      if (code === 'KeyR') this.toggleAutoFlight();
     }
 
     this.keys.add(code);
   }
 
-  private toggleFly(): void {
+  toggleFlying(): boolean {
     this.flying = !this.flying;
     this.verticalVelocity = 0;
     if (this.flying) {
       this.grounded = false;
     } else {
+      this.autoFlight = false;
       // 飛行を切ると落下に移るので、横の勢いだけ残す。
       this.velocity.y = 0;
     }
+    return this.flying;
+  }
+
+  /**
+   * 現在の向きと高さで巡航する。視点はその後も自由に動かせる。
+   * 地上で誤って押しても突然浮き上がらないよう、飛行中だけ受け付ける。
+   */
+  toggleAutoFlight(): boolean {
+    if (!this.flying) return false;
+    this.autoFlight = !this.autoFlight;
+    if (this.autoFlight) {
+      this.autoHeading = this.yaw;
+      this.autoAltitude = Math.max(
+        this.position.y,
+        this.groundAt(this.position.x, this.position.z) + AUTO_CLEARANCE,
+      );
+    }
+    return this.autoFlight;
   }
 
   /**
    * タッチのスティックを反映する。x が右、y が前。
    * 長さがそのまま速度の割合になるので、そっと歩くこともできる。
    */
-  setMoveAxis(x: number, y: number, sprint: boolean): void {
+  setMoveAxis(x: number, y: number, boost: number): void {
     this.axisX = x;
     this.axisY = y;
-    this.axisSprint = sprint;
+    this.axisBoost = THREE.MathUtils.clamp(boost, 0, 1);
   }
 
   clearKeys(): void {
@@ -151,7 +195,7 @@ export class Player {
     this.lastTap.clear();
     this.axisX = 0;
     this.axisY = 0;
-    this.axisSprint = false;
+    this.axisBoost = 0;
   }
 
   onLook(dx: number, dy: number, sensitivity: number): void {
@@ -171,6 +215,34 @@ export class Player {
     return Math.hypot(this.velocity.x, this.velocity.z, this.verticalVelocity);
   }
 
+  get altitudeAboveGround(): number {
+    return Math.max(0, this.position.y - this.groundAt(this.position.x, this.position.z));
+  }
+
+  snapshot(): PlayerSnapshot {
+    return {
+      x: this.position.x,
+      y: this.position.y,
+      z: this.position.z,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      flying: this.flying,
+    };
+  }
+
+  restore(snapshot: PlayerSnapshot): void {
+    this.position.set(snapshot.x, snapshot.y, snapshot.z);
+    this.yaw = snapshot.yaw;
+    this.pitch = THREE.MathUtils.clamp(snapshot.pitch, -Math.PI / 2 + 0.02, Math.PI / 2 - 0.02);
+    this.flying = snapshot.flying;
+    this.autoFlight = false;
+    this.velocity.set(0, 0, 0);
+    this.verticalVelocity = 0;
+    this.grounded = false;
+    const floor = this.groundAt(snapshot.x, snapshot.z) + (snapshot.flying ? 1.2 : EYE_HEIGHT);
+    if (this.position.y < floor) this.position.y = floor;
+  }
+
   /** 水に浸かっているか（UI と移動速度の切り替えに使う）。 */
   get swimming(): boolean {
     if (this.flying) return false;
@@ -179,7 +251,7 @@ export class Player {
     return this.groundAt(x, z) < this.waterSurfaceAt(x, z) - SWIM_DEPTH;
   }
 
-  update(dt: number, camera: THREE.PerspectiveCamera): void {
+  update(dt: number, camera: THREE.PerspectiveCamera, reducedMotion = false): void {
     const k = this.keys;
     let fwd = 0;
     let side = 0;
@@ -204,13 +276,14 @@ export class Player {
     }
 
     const swimming = this.swimming;
+    const keyBoost =
+      this.sprinting || k.has('ShiftLeft') || k.has('ShiftRight') ? 1 : 0;
+    const boost = Math.max(keyBoost, this.axisBoost);
 
     if (this.flying) {
-      this.updateFly(dt, fwd, side);
+      this.updateFly(dt, fwd, side, boost, keyBoost);
     } else {
-      const sprint =
-        this.sprinting || this.axisSprint || k.has('ShiftLeft') || k.has('ShiftRight');
-      this.updateWalk(dt, fwd, side, sprint, swimming);
+      this.updateWalk(dt, fwd, side, boost, swimming);
     }
 
     // 歩いている間だけ、視点をごくわずかに上下させる。
@@ -218,63 +291,138 @@ export class Player {
     if (!this.flying && this.grounded && speed > 0.5) {
       this.bobPhase += dt * speed * 1.15;
     }
-    const bob = this.flying ? 0 : Math.sin(this.bobPhase * 2) * 0.055;
+    const bob = this.flying || reducedMotion ? 0 : Math.sin(this.bobPhase * 2) * 0.055;
+    const rollTarget = this.flying && !reducedMotion ? -side * 0.065 : 0;
+    this.cameraRoll += (rollTarget - this.cameraRoll) * (1 - Math.exp(-7 * dt));
 
     camera.position.set(
       this.position.x,
       this.position.y + bob,
       this.position.z,
     );
-    camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+    camera.rotation.set(this.pitch, this.yaw, this.cameraRoll, 'YXZ');
   }
 
-  private updateFly(dt: number, fwd: number, side: number): void {
-    const speed = FLY_SPEED * (this.sprinting ? 2.6 : 1);
+  private updateFly(
+    dt: number,
+    fwd: number,
+    side: number,
+    boost: number,
+    keyBoost: number,
+  ): void {
+    if (this.autoFlight) {
+      this.updateAutoFlight(dt, fwd, side, keyBoost);
+      return;
+    }
+
+    const throttle = Math.min(1, Math.hypot(fwd, side));
+    const speed = THREE.MathUtils.lerp(FLY_CRUISE_SPEED, FLY_BOOST_SPEED, boost) * throttle;
 
     // 見ている方向にそのまま進む。上を向けば上がり、下を向けば下がる。
     // 左右移動だけは水平に保たないと、傾いたときに操作が読めなくなる。
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-    const dir = new THREE.Vector3(
+    this.targetVelocity.set(
       -sy * cp * fwd + cy * side,
       sp * fwd,
       -cy * cp * fwd - sy * side,
     );
+    if (this.targetVelocity.lengthSq() > 0) {
+      this.targetVelocity.normalize().multiplyScalar(speed);
+    }
 
     // 視線と関係なく真上・真下へ動きたいとき用。
-    if (this.keys.has('Space')) dir.y += 1;
-    if (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.keys.has('KeyC')) {
-      dir.y -= 1;
+    if (this.keys.has('Space')) this.targetVelocity.y += FLY_VERTICAL_SPEED;
+    if (
+      this.keys.has('ControlLeft') ||
+      this.keys.has('ControlRight') ||
+      this.keys.has('KeyC')
+    ) {
+      this.targetVelocity.y -= FLY_VERTICAL_SPEED;
     }
-    // 1 を超えた分だけ抑える。キー入力は常に 1 なので変わらないが、
-    // スティックを半分だけ倒したときは半分の速さで飛ぶ。
-    if (dir.lengthSq() > 1) dir.normalize();
 
-    this.velocity.lerp(dir.multiplyScalar(speed), 1 - Math.exp(-8 * dt));
+    this.velocity.lerp(this.targetVelocity, 1 - Math.exp(-6 * dt));
     this.position.addScaledVector(this.velocity, dt);
+    this.keepAboveGround();
+  }
 
+  private updateAutoFlight(dt: number, fwd: number, side: number, keyBoost: number): void {
+    this.autoHeading -= side * AUTO_TURN_RATE * dt;
+    const cy = Math.cos(this.autoHeading);
+    const sy = Math.sin(this.autoHeading);
+
+    // 現在地だけでなく前方も見ておく。山へ着いてから急上昇すると画面が跳ねる。
+    let safeAltitude = this.groundAt(this.position.x, this.position.z) + AUTO_CLEARANCE;
+    for (const distance of AUTO_LOOK_AHEAD) {
+      const ground = this.groundAt(
+        this.position.x - sy * distance,
+        this.position.z - cy * distance,
+      );
+      safeAltitude = Math.max(safeAltitude, ground + AUTO_CLEARANCE);
+    }
+    this.autoAltitude = Math.max(this.autoAltitude, safeAltitude);
+
+    if (this.keys.has('Space')) this.autoAltitude += FLY_VERTICAL_SPEED * dt;
+    if (
+      this.keys.has('ControlLeft') ||
+      this.keys.has('ControlRight') ||
+      this.keys.has('KeyC')
+    ) {
+      this.autoAltitude -= FLY_VERTICAL_SPEED * dt;
+    }
+    // 下降操作中でも、現在地と前方の地形に必要な余裕は割り込ませない。
+    this.autoAltitude = Math.max(this.autoAltitude, safeAltitude);
+
+    const speedScale = THREE.MathUtils.clamp(1 + fwd * 0.22, 0.62, 1.22);
+    // タッチの「外周」は前へ倒したときだけ高速扱いにする。
+    // 横へ旋回・後ろへ減速するために大きく倒しても、逆に加速させない。
+    const autoBoost = Math.max(keyBoost, this.axisBoost * Math.max(0, fwd));
+    // スティック前後は巡航の微調整、外周・Shift は高速飛行。
+    // 両方を足してもストリーミングが追従できる上限を越えないようにする。
+    const speed = THREE.MathUtils.clamp(
+      FLY_CRUISE_SPEED * speedScale +
+        (FLY_BOOST_SPEED - FLY_CRUISE_SPEED) * autoBoost,
+      FLY_CRUISE_SPEED * 0.62,
+      FLY_BOOST_SPEED,
+    );
+    const vertical = THREE.MathUtils.clamp(
+      (this.autoAltitude - this.position.y) * 0.72,
+      -18,
+      FLY_VERTICAL_SPEED,
+    );
+    this.targetVelocity.set(-sy * speed, vertical, -cy * speed);
+    this.velocity.lerp(this.targetVelocity, 1 - Math.exp(-2.8 * dt));
+    this.position.addScaledVector(this.velocity, dt);
+    this.keepAboveGround();
+  }
+
+  private keepAboveGround(): void {
     // 地面にめり込まないようにだけ押し戻す。
     const floor = this.groundAt(this.position.x, this.position.z) + 1.2;
     if (this.position.y < floor) this.position.y = floor;
     this.grounded = false;
   }
 
-  private updateWalk(dt: number, fwd: number, side: number, sprint: boolean, swimming: boolean): void {
-    const target = new THREE.Vector3();
+  private updateWalk(dt: number, fwd: number, side: number, boost: number, swimming: boolean): void {
+    this.targetVelocity.set(0, 0, 0);
     if (fwd !== 0 || side !== 0) {
       const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
       // 倒し具合をそのまま速度の割合にする。キー入力なら常に 1。
       const throttle = Math.min(1, Math.hypot(fwd, side));
       // 水平面だけを進む。見上げても足取りは変わらない。
-      target.set(-sy * fwd + cy * side, 0, -cy * fwd - sy * side).normalize();
-      const speed = swimming ? SWIM_SPEED : sprint ? SPRINT_SPEED : WALK_SPEED;
-      target.multiplyScalar(speed * throttle);
+      this.targetVelocity
+        .set(-sy * fwd + cy * side, 0, -cy * fwd - sy * side)
+        .normalize();
+      const speed = swimming
+        ? SWIM_SPEED
+        : THREE.MathUtils.lerp(WALK_SPEED, SPRINT_SPEED, boost);
+      this.targetVelocity.multiplyScalar(speed * throttle);
     }
 
     // 加減速をなめらかに。急に止まらない方が歩いている感じになる。
     const accel = 1 - Math.exp(-(this.grounded || swimming ? 11 : 3.5) * dt);
-    this.velocity.x += (target.x - this.velocity.x) * accel;
-    this.velocity.z += (target.z - this.velocity.z) * accel;
+    this.velocity.x += (this.targetVelocity.x - this.velocity.x) * accel;
+    this.velocity.z += (this.targetVelocity.z - this.velocity.z) * accel;
 
     const stepX = this.velocity.x * dt;
     const stepZ = this.velocity.z * dt;
@@ -320,7 +468,12 @@ export class Player {
     const feetTarget = ground + this.eyeOffset;
 
     if (this.grounded) {
-      this.accumulateStep(moved, sprint ? STRIDE_SPRINT : STRIDE_WALK, sprint ? 1 : 0.72);
+      const sprinting = boost > 0.45;
+      this.accumulateStep(
+        moved,
+        THREE.MathUtils.lerp(STRIDE_WALK, STRIDE_SPRINT, boost),
+        sprinting ? 1 : 0.72,
+      );
 
       if (this.keys.has('Space')) {
         this.verticalVelocity = JUMP_SPEED;

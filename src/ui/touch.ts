@@ -4,8 +4,8 @@ import type { Player } from '../player/controller';
 const STICK_RADIUS = 58;
 /** これ以下のブレは無視する。指を置いただけで歩き出さないように。 */
 const DEAD_ZONE = 7;
-/** この割合以上倒したら走る。 */
-const SPRINT_AT = 0.85;
+/** ここから外周へ向かって、歩行→走行／巡航→高速を滑らかに繋ぐ。 */
+const BOOST_FROM = 0.72;
 /** 指での視点移動の倍率。画面上を指が動く距離は短いので、マウスより速くする。 */
 const LOOK_SCALE = 2.4;
 
@@ -16,23 +16,28 @@ export interface TouchControlsOptions {
   lookSensitivity: number;
   isPlaying: () => boolean;
   onPause: () => void;
+  /** タッチ対応PCで、実際に指が使われたときだけ入力表示を切り替える。 */
+  onTouchInput?: () => void;
 }
 
 export interface TouchControls {
   /** 歩いている間だけ出す。開始画面の上に重ねない。 */
   setActive(active: boolean): void;
+  /** 飛行・オート状態に応じて、必要なボタンだけを見せる。 */
+  update(): void;
 }
 
 /**
- * 指で操作する画面かどうか。
- *
- * (pointer: coarse) だけでは、キーボードを繋いだタブレットのように
- * 「主たるポインタは細いが指でも触れる」端末を取りこぼす。
- * その状態だと操作ボタンが一切出ず、何もできない画面になるので、
- * 触れる端末なら出す方に倒している。キーボードは常に併用できる。
+ * 最初にタッチUIを見せるべき端末か。タッチ対応ノートPCを永久に
+ * スマホ扱いしないため、指があるかではなく主入力の性質を見る。
  */
 export function isTouchDevice(): boolean {
-  return matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  return matchMedia('(pointer: coarse)').matches && !matchMedia('(hover: hover)').matches;
+}
+
+/** 初期表示とは別に、指そのものが使えるかを調べる。 */
+export function hasTouchInput(): boolean {
+  return matchMedia('(any-pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 }
 
 /**
@@ -43,13 +48,15 @@ export function isTouchDevice(): boolean {
  * 右半分はどこを触っても視点操作。
  */
 export function createTouchControls(opts: TouchControlsOptions): TouchControls {
-  const { root, surface, player, lookSensitivity, isPlaying, onPause } = opts;
+  const { root, surface, player, lookSensitivity, isPlaying, onPause, onTouchInput } = opts;
 
   const layer = document.createElement('div');
   layer.className = 'touch';
   layer.innerHTML = `
     <div class="stick"><span class="stick-knob"></span></div>
     <button class="touch-btn touch-jump" aria-label="跳ぶ"></button>
+    <button class="touch-btn touch-flight" aria-label="飛ぶ／降りる"></button>
+    <button class="touch-btn touch-auto" aria-label="オートフライト">AUTO</button>
     <button class="touch-btn touch-pause" aria-label="一時停止"></button>
   `;
   root.appendChild(layer);
@@ -57,6 +64,8 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
   const stick = layer.querySelector('.stick') as HTMLElement;
   const knob = layer.querySelector('.stick-knob') as HTMLElement;
   const jump = layer.querySelector('.touch-jump') as HTMLElement;
+  const flight = layer.querySelector('.touch-flight') as HTMLElement;
+  const auto = layer.querySelector('.touch-auto') as HTMLElement;
   const pause = layer.querySelector('.touch-pause') as HTMLElement;
 
   /** スティックを操作している指。null なら誰も触っていない。 */
@@ -71,14 +80,21 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
 
   const releaseStick = () => {
     movePointer = null;
-    player.setMoveAxis(0, 0, false);
+    player.setMoveAxis(0, 0, 0);
     stick.classList.remove('on');
   };
 
   const onPointerDown = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse') return;
     if (!isPlaying()) return;
+    onTouchInput?.();
     // ボタンの上で始まった操作は、そちらの担当。
     if ((e.target as HTMLElement).closest('.touch-btn')) return;
+    try {
+      surface.setPointerCapture(e.pointerId);
+    } catch {
+      // 一部の WebView は capture を持たない。通常の pointerup だけで続行できる。
+    }
 
     if (e.clientX < innerWidth / 2) {
       if (movePointer !== null) return;
@@ -104,7 +120,7 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
       const distance = Math.hypot(dx, dy);
 
       if (distance < DEAD_ZONE) {
-        player.setMoveAxis(0, 0, false);
+        player.setMoveAxis(0, 0, 0);
         knob.style.transform = 'translate(-50%, -50%)';
         return;
       }
@@ -116,11 +132,13 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
       knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
 
       const amount = clamped / STICK_RADIUS;
+      const boostLinear = Math.max(0, Math.min(1, (amount - BOOST_FROM) / (1 - BOOST_FROM)));
+      const boost = boostLinear * boostLinear * (3 - 2 * boostLinear);
       // 画面の下方向が後ろなので、y は符号を反転する。
       player.setMoveAxis(
         (dx / clamped) * amount,
         (-dy / clamped) * amount,
-        amount >= SPRINT_AT,
+        boost,
       );
       return;
     }
@@ -137,27 +155,56 @@ export function createTouchControls(opts: TouchControlsOptions): TouchControls {
     if (e.pointerId === lookPointer) lookPointer = null;
   };
 
-  // 跳ぶボタンは Space と同じ扱いにする。
-  // 二度押しで飛行に切り替わる仕組みも、そのまま効く。
-  const onJumpDown = (e: PointerEvent) => {
+  const captureButton = (button: HTMLElement, e: PointerEvent) => {
+    if (e.pointerType === 'mouse') return false;
     e.preventDefault();
-    player.onKey('Space', true);
+    onTouchInput?.();
+    try {
+      button.setPointerCapture(e.pointerId);
+    } catch {
+      // capture が無くても button 自体の pointerup で解除できる。
+    }
+    return true;
   };
-  const onJumpUp = () => player.onKey('Space', false);
+
+  // タッチでは飛行を独立ボタンにしたので、ジャンプ二度押しを誤発火させない。
+  const onJumpDown = (e: PointerEvent) => {
+    if (!captureButton(jump, e)) return;
+    player.onKey('Space', true, false, false);
+  };
+  const onJumpUp = () => player.onKey('Space', false, false, false);
 
   surface.addEventListener('pointerdown', onPointerDown);
   surface.addEventListener('pointermove', onPointerMove);
   surface.addEventListener('pointerup', onPointerUp);
   surface.addEventListener('pointercancel', onPointerUp);
+  surface.addEventListener('lostpointercapture', onPointerUp);
   jump.addEventListener('pointerdown', onJumpDown);
   jump.addEventListener('pointerup', onJumpUp);
   jump.addEventListener('pointercancel', onJumpUp);
+  flight.addEventListener('pointerdown', (e) => {
+    if (!captureButton(flight, e)) return;
+    player.toggleFlying();
+  });
+  auto.addEventListener('pointerdown', (e) => {
+    if (!captureButton(auto, e)) return;
+    player.toggleAutoFlight();
+  });
   pause.addEventListener('click', onPause);
 
   return {
     setActive(active: boolean) {
       layer.classList.toggle('on', active);
-      if (!active) releaseStick();
+      if (!active) {
+        releaseStick();
+        lookPointer = null;
+        player.onKey('Space', false, false, false);
+      }
+    },
+    update() {
+      flight.classList.toggle('active', player.flying);
+      auto.classList.toggle('available', player.flying);
+      auto.classList.toggle('active', player.autoFlight);
     },
   };
 }

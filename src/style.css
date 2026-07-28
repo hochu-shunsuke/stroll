@@ -158,6 +158,13 @@ button {
 
 /* ---- ボタン ---- */
 
+.entry-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
 .start {
   align-self: center;
   min-width: 210px;
@@ -183,6 +190,22 @@ button {
   color: rgba(255, 255, 255, 0.7);
 }
 
+.fresh {
+  padding: 5px 14px;
+  font-size: 11px;
+  color: #9dafb3;
+  background: transparent;
+  border: none;
+}
+
+.fresh:hover {
+  color: var(--ink);
+}
+
+.fresh.hidden {
+  display: none;
+}
+
 .share {
   align-self: center;
   margin-top: -12px;
@@ -191,6 +214,13 @@ button {
   color: var(--muted);
   background: transparent;
   border: none;
+}
+
+.browser-hint {
+  margin: -12px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #7d8e94;
 }
 
 .share:hover {
@@ -397,6 +427,56 @@ kbd {
   height: 76px;
 }
 
+.touch-jump::before {
+  content: '';
+  width: 17px;
+  height: 17px;
+  border-top: 3px solid var(--ink);
+  border-left: 3px solid var(--ink);
+  transform: translateY(4px) rotate(45deg);
+}
+
+.touch-flight {
+  right: max(34px, calc(env(safe-area-inset-right) + 10px));
+  bottom: max(128px, calc(env(safe-area-inset-bottom) + 104px));
+  width: 56px;
+  height: 56px;
+}
+
+.touch-flight::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-bottom: 18px solid var(--ink);
+  transform: translateY(-1px);
+}
+
+.touch-flight.active::before {
+  transform: rotate(180deg) translateY(-1px);
+}
+
+.touch-auto {
+  right: max(32px, calc(env(safe-area-inset-right) + 8px));
+  bottom: max(198px, calc(env(safe-area-inset-bottom) + 174px));
+  width: 60px;
+  height: 34px;
+  display: none;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.touch-auto.available {
+  display: grid;
+}
+
+.touch-auto.active {
+  color: #10201f;
+  background: rgba(223, 233, 230, 0.88);
+  border-color: rgba(255, 255, 255, 0.78);
+}
+
 .touch-pause {
   right: max(16px, env(safe-area-inset-right));
   top: max(16px, env(safe-area-inset-top));
@@ -469,6 +549,26 @@ kbd {
   opacity: 0;
 }
 
+.flight-hud {
+  position: absolute;
+  left: 50%;
+  top: max(18px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(12, 20, 26, 0.28);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.flight-hud.on {
+  opacity: 1;
+}
+
 .toast {
   position: absolute;
   left: 50%;
@@ -490,3 +590,78 @@ kbd {
   transform: translate(-50%, 0);
 }
 
+/* 内ブラウザの上下バーで高さが削られても、開始ボタンを最初から見せる。 */
+@media (max-height: 480px) and (orientation: landscape) {
+  .veil {
+    padding:
+      max(10px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  }
+
+  .card {
+    width: min(720px, 100%);
+    display: grid;
+    grid-template-columns: minmax(220px, 0.9fr) minmax(270px, 1.1fr);
+    grid-template-areas:
+      'brand fields'
+      'entry fields'
+      'share fields'
+      'browser fields'
+      'controls controls';
+    gap: 8px 22px;
+    padding: 16px 22px;
+  }
+
+  .brand {
+    grid-area: brand;
+    gap: 5px;
+  }
+
+  .card h1 {
+    font-size: 22px;
+  }
+
+  .lead {
+    line-height: 1.45;
+  }
+
+  .fields {
+    grid-area: fields;
+    gap: 10px;
+  }
+
+  .field {
+    gap: 5px;
+  }
+
+  .entry-actions {
+    grid-area: entry;
+  }
+
+  .start {
+    padding-block: 10px;
+  }
+
+  .share {
+    grid-area: share;
+    margin-top: 0;
+  }
+
+  .browser-hint {
+    grid-area: browser;
+    margin: 0;
+  }
+
+  .controls {
+    grid-area: controls;
+    padding-top: 8px;
+  }
+
+  .keys {
+    margin-top: 8px;
+  }
+
+  .controls-note {
+    margin-top: 7px;
+  }
+}
