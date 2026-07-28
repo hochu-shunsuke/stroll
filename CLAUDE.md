@@ -113,6 +113,11 @@ KIND を足し `render/treeCatalog.ts` の `TREE_CATALOG` に形を足す。3 �
   全世界で宝物の位置が同じになる（一度これで壊した）
 - **非インデックスのジオメトリを頂点番号で変形しない。** 同じ角が複数頂点として
   重複しているので、番号で乱数を引くと面が裂ける。座標から引くこと（岩で踏んだ）
+- **空の手続きノイズで大きな値を `fract()` へ入れない。** スマホ GPU の
+  `mediump` では丸めや上限超過が起き、雲に亀裂・段階移動が出る。
+  `render/sky.ts` は小さい座標と 0..1 のシード salt だけでハッシュを作る。
+  雲量は「一点でも空が見えるか」ではなく、`test/cloud-coverage.test.mjs` で
+  画面占有率と最大連結領域を測る
 - **挙動を変えない整理では生成スナップショットを更新しない。**
   `test/world-generation.test.mjs` は固定シードの標高・気候・チャンク・植生と
   全木形状をハッシュで守る。意図した景色変更で更新するときは、先に画面と統計を確認する
@@ -146,7 +151,7 @@ KIND を足し `render/treeCatalog.ts` の `TREE_CATALOG` に形を足す。3 �
 npm run dev      # クライアント（vite。LAN 公開されるのでスマホからも見られる）
 npm run relay    # 中継サーバ（別ターミナル。wrangler dev）
 npm run ci       # 型(client/server)＋ビルド＋全テスト。push 前にこれを通す
-npm test         # seed の規則＋ワールド生成の固定スナップショット
+npm test         # seed の規則＋ワールド生成スナップショット＋雲の画面占有率
 npm run deploy   # ビルドして Cloudflare へ。本体と中継が同時に出る
 ```
 

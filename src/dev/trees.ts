@@ -22,7 +22,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 3000);
+// Sky の半径は 6,000m。far がそれより短いと見本帳だけ空が黒く抜ける。
+const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 9000);
 
 // 本番と同じ光と霧。ここで良く見えても本番で違ったら意味がない。
 const sky = new Sky(scene, MORNING);

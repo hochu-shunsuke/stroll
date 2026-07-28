@@ -15,7 +15,7 @@ const frag = /* glsl */ `
   uniform vec3 uGround;
   uniform vec3 uSunColor;
   uniform vec3 uSunDir;
-  uniform vec2 uCloudOrigin;
+  uniform vec2 uCloudSeed;
   uniform float uCloudTime;
   uniform float uCloudAmount;
   uniform float uCloudLow;
@@ -26,10 +26,18 @@ const frag = /* glsl */ `
   varying vec3 vDir;
 
   // 値ノイズ。テクスチャを使わずに雲を作るため。
+  //
+  // 大きな座標へ 100 以上の定数を掛けて fract を取る方式は使わない。
+  // スマホ GPU の mediump では値が丸まるか上限を越え、雲に亀裂や段階的な動きが出る。
+  // 座標を小さい周期へ収め、小数の範囲で完結するハッシュにする。
   float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
+    p = mod(p, 71.0);
+    vec3 p3 = fract(
+      vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)
+      + vec3(uCloudSeed, uCloudSeed.x)
+    );
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
   }
   float vnoise(vec2 p) {
     vec2 i = floor(p);
@@ -69,7 +77,7 @@ const frag = /* glsl */ `
     // 頂点も texture も増えない。空の半分が無地なのが一番もったいなかった。
     float horizonFade = smoothstep(0.015, 0.22, d.y);
     if (horizonFade > 0.001) {
-      vec2 cp = (d.xz / max(d.y, 0.075)) * uCloudScale + uCloudOrigin
+      vec2 cp = (d.xz / max(d.y, 0.075)) * uCloudScale
               + vec2(uCloudTime, uCloudTime * 0.35);
       float n = cloudFbm(cp);
       float thick = smoothstep(uCloudLow, uCloudHigh, n);
@@ -170,10 +178,13 @@ export const MORNING: SkyPreset = {
   fogDensity: 0.00095,
   // 朝の薄い雲。空の半分ほどを覆うが、輪郭は柔らかく取る。
   // 濃くしすぎると光が沈んで、せっかくの低い朝日が効かなくなる。
+  // 雲の有無を一点でも探す測り方では、ほぼ曇天でも「全面雲ではない」と誤判定する。
+  // 200 世界 × 8 方向の画面占有率と最大連結領域を測り、scale / low を決めている。
+  // 見える雲の占有率は平均 20%、p90 40%、p99 58%。連結領域の p99 は 56%。
   cloudAmount: 0.85,
-  cloudLow: 0.42,
+  cloudLow: 0.54,
   cloudHigh: 0.82,
-  cloudScale: 0.115,
+  cloudScale: 0.44,
   cloudDrift: 0.0022,
   cloudPeak: 2.3,
   cloudShade: 0.42,
@@ -277,10 +288,11 @@ export class Sky {
         uGround: { value: col(preset.ground) },
         uSunColor: { value: col(preset.sun) },
         uSunDir: { value: this.sunDirection.clone() },
-        // 世界ごとに雲の並びを変える。合言葉が違えば空も違う。
-        uCloudOrigin: { value: new THREE.Vector2(
-          ((cloudSeed & 0xffff) / 0xffff) * 400 - 200,
-          (((cloudSeed >>> 16) & 0xffff) / 0xffff) * 400 - 200,
+        // 世界ごとにハッシュをずらす。大きな座標を足すと低精度 GPU で雲の動きが
+        // 数秒おきの段階移動になるため、0..1 の小さい salt として渡す。
+        uCloudSeed: { value: new THREE.Vector2(
+          (cloudSeed & 0xffff) / 0xffff,
+          ((cloudSeed >>> 16) & 0xffff) / 0xffff,
         ) },
         uCloudTime: { value: 0 },
         uCloudAmount: { value: preset.cloudAmount },
