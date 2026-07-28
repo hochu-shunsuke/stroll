@@ -33,6 +33,7 @@ export class Overlay {
   private peersText = '';
   private flightText = '';
   private touch: boolean;
+  private touchCapable: boolean;
   private resumable: boolean;
   private ready = false;
   private entered = false;
@@ -41,12 +42,14 @@ export class Overlay {
     root: HTMLElement,
     seed: string,
     touch: boolean,
+    touchCapable: boolean,
     resumable: boolean,
     handlers: OverlayHandlers,
   ) {
     this.root = root;
     this.seed = seed;
     this.touch = touch;
+    this.touchCapable = touchCapable;
     this.resumable = resumable;
     this.handlers = handlers;
     const browserHint =
@@ -117,12 +120,8 @@ export class Overlay {
 
     this.peers = this.root.querySelector('.hud-peers')!;
 
-    this.startBtn.addEventListener('click', (event) => {
-      this.handlers.onStart(this.resumable, pointerTypeOf(event));
-    });
-    this.freshBtn.addEventListener('click', (event) => {
-      this.handlers.onStart(false, pointerTypeOf(event));
-    });
+    this.bindEntryButton(this.startBtn, () => this.resumable);
+    this.bindEntryButton(this.freshBtn, () => false);
     this.root.querySelector('.share')!.addEventListener('click', () => this.copyUrl());
 
     const nameInput = this.root.querySelector('.name') as HTMLInputElement;
@@ -144,6 +143,50 @@ export class Overlay {
       if (next !== this.seed) this.handlers.onSeed(next);
     });
     this.root.querySelector('.seed-row')!.appendChild(seedField.element);
+  }
+
+  /**
+   * iOS Safari はタッチ由来の click を MouseEvent、または pointerType="mouse" として
+   * 送る版がある。click だけを見ると PC 用 Pointer Lock へ入り、開始できなくなる。
+   * 直前の pointerdown は正しく touch なので、そちらを優先して入口を決める。
+   */
+  private bindEntryButton(
+    button: HTMLButtonElement,
+    resume: () => boolean,
+  ): void {
+    let recentPointerType = '';
+    let recentPointerAt = 0;
+
+    button.addEventListener('pointerdown', (event) => {
+      recentPointerType = event.pointerType;
+      recentPointerAt = performance.now();
+    });
+    button.addEventListener('pointerup', () => {
+      // 長押しでも click 直前の入力として扱えるよう、離した時刻へ更新する。
+      recentPointerAt = performance.now();
+    });
+    button.addEventListener('pointercancel', () => {
+      recentPointerType = '';
+      recentPointerAt = 0;
+    });
+    button.addEventListener('click', (event) => {
+      const clickPointerType =
+        typeof PointerEvent !== 'undefined' && event instanceof PointerEvent
+          ? event.pointerType
+          : event instanceof MouseEvent
+            ? 'mouse'
+            : '';
+      const clickDetail = event instanceof MouseEvent ? event.detail : 0;
+      const pointerType = resolveEntryPointerType(
+        performance.now() - recentPointerAt < 1_500 ? recentPointerType : '',
+        clickPointerType,
+        this.touchCapable,
+        clickDetail,
+      );
+      recentPointerType = '';
+      recentPointerAt = 0;
+      this.handlers.onStart(resume(), pointerType);
+    });
   }
 
   /**
@@ -241,10 +284,23 @@ export class Overlay {
   }
 }
 
-function pointerTypeOf(event: Event): string {
-  return typeof PointerEvent !== 'undefined' && event instanceof PointerEvent
-    ? event.pointerType
-    : 'keyboard';
+/**
+ * 開始操作に使われた入力。引数だけの純粋関数にして Safari の互換経路をテストする。
+ */
+export function resolveEntryPointerType(
+  recentPointerType: string,
+  clickPointerType: string,
+  touchCapable: boolean,
+  clickDetail: number,
+): string {
+  // キーボードで button を起動した click は detail=0。タッチ端末でも区別できる。
+  if (clickDetail === 0) return 'keyboard';
+  if (recentPointerType) return recentPointerType;
+  // iOS Safari 18.2 はタッチ由来の click を mouse と報告する。
+  if (touchCapable && (clickPointerType === '' || clickPointerType === 'mouse')) {
+    return 'touch';
+  }
+  return clickPointerType || 'keyboard';
 }
 
 function escapeHtml(s: string): string {

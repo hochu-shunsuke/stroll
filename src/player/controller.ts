@@ -222,6 +222,11 @@ export class Player {
     return Math.max(0, this.position.y - this.groundAt(this.position.x, this.position.z));
   }
 
+  /** HUD に出す海抜高度。地形との距離とは分け、山の上でも値が連続する。 */
+  get altitudeAboveSeaLevel(): number {
+    return Math.max(0, this.position.y - SEA_LEVEL);
+  }
+
   snapshot(): PlayerSnapshot {
     return {
       x: this.position.x,
@@ -321,14 +326,13 @@ export class Player {
     const throttle = Math.min(1, Math.hypot(fwd, side));
     const speed = THREE.MathUtils.lerp(FLY_CRUISE_SPEED, FLY_BOOST_SPEED, boost) * throttle;
 
-    // 見ている方向にそのまま進む。上を向けば上がり、下を向けば下がる。
-    // 左右移動だけは水平に保たないと、傾いたときに操作が読めなくなる。
+    // 進路は視線の上下角から切り離す。地形を見下ろしたまま前進しつつ、
+    // Space で上昇できることが空から探す遊びには重要。
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
-    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     this.targetVelocity.set(
-      -sy * cp * fwd + cy * side,
-      sp * fwd,
-      -cy * cp * fwd - sy * side,
+      -sy * fwd + cy * side,
+      0,
+      -cy * fwd - sy * side,
     );
     if (this.targetVelocity.lengthSq() > 0) {
       this.targetVelocity.normalize().multiplyScalar(speed);

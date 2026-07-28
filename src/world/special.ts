@@ -47,7 +47,10 @@ export interface SpecialBiome {
  * 秋・桜のような「色づいた林」はこれ。
  */
 function forest(name: string, rarity: number, groundHex: number, treeKind: number): SpecialBiome {
-  return { name, rarity, ground: srgb(groundHex), treeKind, treeSpacing: 6, treeDensity: 0.9 };
+  // 6m / 0.9 では中心部がほぼ全候補で埋まり、桜・秋だけ通常林の
+  // 3〜18倍の頂点を描いていた。色面は地面にもあるので、木の間から
+  // 奥を見通せる「林」の密度で十分に特別さが出る。
+  return { name, rarity, ground: srgb(groundHex), treeKind, treeSpacing: 9, treeDensity: 0.62 };
 }
 
 /**

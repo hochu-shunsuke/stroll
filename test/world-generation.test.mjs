@@ -19,13 +19,20 @@ const server = await createServer({
 });
 
 try {
-  const [{ Terrain }, { buildChunkArrays }, { buildScatterData }, treeModule, { findSpawn }] =
-    await Promise.all([
+  const [
+    { Terrain },
+    { CHUNK_SIZE, buildChunkArrays },
+    { buildScatterData },
+    treeModule,
+    { findSpawn },
+    { SPECIAL_BIOMES },
+  ] = await Promise.all([
       server.ssrLoadModule('/src/world/terrain.ts'),
       server.ssrLoadModule('/src/world/chunk.ts'),
       server.ssrLoadModule('/src/world/scatter.ts'),
       server.ssrLoadModule('/src/render/treeShape.ts'),
       server.ssrLoadModule('/src/world/spawn.ts'),
+      server.ssrLoadModule('/src/world/special.ts'),
     ]);
 
   const digest = (...parts) => {
@@ -123,6 +130,45 @@ try {
     };
   });
 
+  const specialForestMetrics = [];
+  for (const sample of [
+    { seed: 's0000000', x: 3500, z: 5500, index: 0 },
+    { seed: 's0000000', x: -5900, z: -5900, index: 1 },
+  ]) {
+    const world = new Terrain(sample.seed);
+    assert.equal(world.specialAt(sample.x, sample.z).index, sample.index);
+    const cx = Math.floor(sample.x / CHUNK_SIZE);
+    const cz = Math.floor(sample.z / CHUNK_SIZE);
+    const kind = SPECIAL_BIOMES[sample.index].treeKind;
+    let count = 0;
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (const batch of buildScatterData(world, cx + dx, cz + dz, 0)) {
+          if (batch.kind === kind) count += batch.matrices.length / 16;
+        }
+      }
+    }
+    const treeEntry = treeModule.TREE_CATALOG.find((entry) => entry.kind === kind);
+    // vegetation.ts が本番で形を作るシードと揃え、実際の頂点負荷を測る。
+    const treeVertices = treeModule
+      .buildCatalogGeometry(treeEntry, 0x9e3779b9 ^ kind)
+      .getAttribute('position').count;
+    const vertices = count * treeVertices;
+    assert(
+      count >= 400 && count <= 1000,
+      `${SPECIAL_BIOMES[sample.index].name} の9チャンクに木が ${count} 本あります`,
+    );
+    assert(
+      vertices <= 3_000_000,
+      `${SPECIAL_BIOMES[sample.index].name} の9チャンクが ${vertices} 頂点あります`,
+    );
+    specialForestMetrics.push({
+      name: SPECIAL_BIOMES[sample.index].name,
+      count,
+      vertices,
+    });
+  }
+
   const actual = { terrain, chunks, scatter, trees };
 
   // 以前は湖底の標高だけで開始地点を選んでいたため、浅く平らな湖の中が
@@ -204,6 +250,12 @@ try {
       'ワールド生成結果が変わりました。意図した変更なら画面と統計を確認してスナップショットを更新してください。',
     );
     console.log('PASS  ワールド生成（地形・チャンク・植生・木形状）が固定値と一致');
+    console.log(
+      'PASS  宝物の森の描画予算',
+      specialForestMetrics
+        .map((metric) => `${metric.name} ${metric.count}本 / ${metric.vertices}頂点`)
+        .join(' · '),
+    );
   }
 } finally {
   await server.close();

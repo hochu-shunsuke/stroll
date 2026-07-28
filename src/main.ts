@@ -128,7 +128,6 @@ function main(): void {
   // 音は最初の操作まで作れない（ブラウザの自動再生制限）。
   let audio: AudioEngine | null = null;
   let ambience: Ambience | null = null;
-  let footsteps: Footsteps | null = null;
 
   // 歩いている最中かどうか。
   // PC はポインタロックの有無と一致するが、タッチ端末にはロックが無いので
@@ -141,6 +140,7 @@ function main(): void {
   let wakeLock: WakeLockSentinelLike | null = null;
   let lastAutoFlight = false;
   let saveElapsed = 0;
+  let audioUnavailable = false;
 
   /** 初回の挨拶にも毎回の送信にも同じものを使う。片方だけ変わると位置がずれる。 */
   const playerState = (): PlayerState => ({
@@ -157,6 +157,7 @@ function main(): void {
     document.getElementById('ui')!,
     seed,
     inputMode === 'touch',
+    touchCapable,
     savedPosition !== null,
     {
       onStart: (resume, pointerType) => handleStart(resume, pointerType),
@@ -180,33 +181,50 @@ function main(): void {
   };
 
   function startAudio(): void {
+    if (audioUnavailable) return;
     if (audio) {
       audio.resume();
       return;
     }
-    audio = new AudioEngine();
-    ambience = new Ambience(audio);
-    footsteps = new Footsteps(audio);
-    player.onFootstep = (intensity) => footsteps!.step(intensity);
-    player.onLand = (intensity) => footsteps!.land(intensity);
+    let nextAudio: AudioEngine | null = null;
+    try {
+      nextAudio = new AudioEngine();
+      const nextAmbience = new Ambience(nextAudio);
+      const nextFootsteps = new Footsteps(nextAudio);
+      audio = nextAudio;
+      ambience = nextAmbience;
+      player.onFootstep = (intensity) => nextFootsteps.step(intensity);
+      player.onLand = (intensity) => nextFootsteps.land(intensity);
+    } catch (error) {
+      // AudioContext の上限や内ブラウザの制限で音を作れなくても、入場は止めない。
+      audioUnavailable = true;
+      void nextAudio?.ctx.close().catch(() => {});
+      console.warn('Audio is unavailable; continuing without sound.', error);
+    }
   }
 
   function connect(): void {
     if (connection || !relayUrl) return;
-    connection = new Connection({
-      url: relayUrl,
-      seed,
-      name: overlay.name || '名無し',
-      getState: playerState,
-      handlers: {
-        onJoin: (peer) => avatars.add(peer.id, peer.name, peer.state),
-        onLeave: (id) => avatars.remove(id),
-        onState: (id, state) => avatars.setState(id, state),
-        onStatus: (status) => {
-          netMessage = NET_MESSAGES[status];
+    try {
+      connection = new Connection({
+        url: relayUrl,
+        seed,
+        name: overlay.name || '名無し',
+        getState: playerState,
+        handlers: {
+          onJoin: (peer) => avatars.add(peer.id, peer.name, peer.state),
+          onLeave: (id) => avatars.remove(id),
+          onState: (id, state) => avatars.setState(id, state),
+          onStatus: (status) => {
+            netMessage = NET_MESSAGES[status];
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      // URL・WebSocket・保存領域の制限があっても、1人で歩く入口は止めない。
+      netMessage = NET_MESSAGES.unreachable;
+      console.warn('Multiplayer is unavailable; continuing offline.', error);
+    }
   }
 
   function startPlaying(): void {
@@ -237,7 +255,10 @@ function main(): void {
       return;
     }
 
-    const startedWithTouch = pointerType === 'touch' || pointerType === 'pen';
+    const startedWithTouch =
+      pointerType === 'touch' ||
+      pointerType === 'pen' ||
+      (pointerType === 'keyboard' && preferredTouch);
     setInputMode(startedWithTouch ? 'touch' : 'keys');
 
     if (!entryChosen) {
@@ -317,6 +338,14 @@ function main(): void {
       try {
         await canvas.requestPointerLock();
       } catch {
+        // iPhone の全ブラウザで入力種別が誤報されても、入口を塞がない。
+        // Pointer Lock はタッチ操作に不要なので、タッチ可能ならそのまま開始できる。
+        if (touchCapable) {
+          setInputMode('touch');
+          startPlaying();
+          overlay.flash('タッチ操作で開始します。');
+          return;
+        }
         overlay.flash('少し待ってから、もう一度クリックしてください');
       }
     }
@@ -471,9 +500,10 @@ function main(): void {
       }
     }
 
-    const altitude = player.altitudeAboveGround;
+    const clearance = player.altitudeAboveGround;
+    const altitude = player.altitudeAboveSeaLevel;
     updateCameraFeel(dt);
-    updateAerialVisibility(dt, altitude);
+    updateAerialVisibility(dt, clearance);
     touchControls?.update();
     overlay.setFlightInfo(player.flying, player.speed, altitude, player.autoFlight);
 
@@ -490,7 +520,7 @@ function main(): void {
     ambience?.update(dt, {
       speed: player.speed,
       moisture: terrain.moistureAt(player.position.x, player.position.z),
-      altitude,
+      altitude: clearance,
     });
 
     if (connection) {

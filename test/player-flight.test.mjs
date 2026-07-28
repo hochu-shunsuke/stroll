@@ -27,6 +27,11 @@ const rampTerrain = {
   waterLevelAt: () => Number.NEGATIVE_INFINITY,
 };
 
+const plateauTerrain = {
+  heightOnGrid: () => 120,
+  waterLevelAt: () => Number.NEGATIVE_INFINITY,
+};
+
 function run(player, camera, seconds, step = 1 / 60) {
   for (let elapsed = 0; elapsed < seconds; elapsed += step) {
     player.update(step, camera, true);
@@ -34,8 +39,34 @@ function run(player, camera, seconds, step = 1 / 60) {
 }
 
 try {
-  const { Player, FLY_CRUISE_SPEED, FLY_BOOST_SPEED } =
-    await server.ssrLoadModule('/src/player/controller.ts');
+  const [
+    { Player, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
+    { resolveEntryPointerType },
+  ] = await Promise.all([
+    server.ssrLoadModule('/src/player/controller.ts'),
+    server.ssrLoadModule('/src/ui/overlay.ts'),
+  ]);
+
+  assert.equal(
+    resolveEntryPointerType('touch', 'mouse', true, 1),
+    'touch',
+    'iOS Safariの誤ったclick.pointerTypeよりpointerdownを優先できません',
+  );
+  assert.equal(
+    resolveEntryPointerType('', 'mouse', true, 1),
+    'touch',
+    '古いiOS SafariのMouseEvent clickをタッチへ戻せません',
+  );
+  assert.equal(
+    resolveEntryPointerType('mouse', 'mouse', true, 1),
+    'mouse',
+    'タッチ対応端末で実際に使ったマウスを奪っています',
+  );
+  assert.equal(
+    resolveEntryPointerType('touch', '', true, 0),
+    'keyboard',
+    '直前にタッチしていてもキーボード操作をタッチへ誤分類しています',
+  );
 
   {
     const player = new Player(flatTerrain, 0, 0);
@@ -46,6 +77,38 @@ try {
     assert(
       Math.abs(player.speed - FLY_CRUISE_SPEED) < 0.2,
       `巡航速度が ${player.speed.toFixed(2)} m/s になっています`,
+    );
+  }
+
+  {
+    const player = new Player(flatTerrain, 0, 0);
+    const camera = new THREE.PerspectiveCamera();
+    player.toggleFlying();
+    // 空から地形を見下ろす角度でも、前進と上昇は同時に成立する。
+    player.pitch = -1.2;
+    player.setMoveAxis(0, 1, 0);
+    player.onKey('Space', true, false, false);
+    run(player, camera, 1);
+    player.onKey('Space', false, false, false);
+    assert(
+      player.position.z < -55,
+      `見下ろし中の前進距離が不足しています: ${player.position.z.toFixed(1)} m`,
+    );
+    assert(
+      player.position.y > 25,
+      `前進と同時に上昇できていません: ${player.position.y.toFixed(1)} m`,
+    );
+  }
+
+  {
+    const player = new Player(plateauTerrain, 0, 0);
+    assert(
+      Math.abs(player.altitudeAboveGround - 1.68) < 0.01,
+      `地表高が正しくありません: ${player.altitudeAboveGround.toFixed(2)} m`,
+    );
+    assert(
+      Math.abs(player.altitudeAboveSeaLevel - 121.68) < 0.01,
+      `HUD用高度が海面基準ではありません: ${player.altitudeAboveSeaLevel.toFixed(2)} m`,
     );
   }
 

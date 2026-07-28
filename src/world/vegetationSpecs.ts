@@ -38,6 +38,8 @@ export interface KindSpec {
   maxLod: number;
   giantChance?: number;
   blocksSpawn?: boolean;
+  /** 宝物専用ならその添字。区画外で地形・気候を引く前に候補を落とす。 */
+  specialIndex?: number;
   tint?: readonly [number, number, number];
   /** 置くならスケールを、置かないなら 0 を返す。 */
   place(ctx: PlaceContext): number;
@@ -196,6 +198,7 @@ const SPECIAL_SPECS: KindSpec[] = SPECIAL_BIOMES.flatMap((biome, index) => {
       maxLod: 1,
       giantChance: 0.012,
       blocksSpawn: true,
+      specialIndex: index,
       place: (c) => {
         if (c.special.index !== index) return 0;
         if (c.h < 1.5) return 0;

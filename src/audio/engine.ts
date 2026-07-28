@@ -38,7 +38,7 @@ export class AudioEngine {
 
   /** ブラウザの制限があるので、必ずクリック等の操作の中から呼ぶこと。 */
   resume(): void {
-    if (this.ctx.state !== 'running') void this.ctx.resume();
+    if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => {});
   }
 
   /** ループ再生するノイズ源を作る。開始位置をずらして重なりの癖を消す。 */

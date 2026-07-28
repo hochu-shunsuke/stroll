@@ -47,13 +47,27 @@ export function hasTallVegetationNear(
         const z = (gz + hash2(gx, gz, spec.salt + 2)) * spec.spacing;
         if ((x - centerX) ** 2 + (z - centerZ) ** 2 >= r2) continue;
 
+        // 宝物専用の木は、区画外ならここで終える。以前は桜・秋それぞれで
+        // 地形・雨陰・気温まで計算してから place() の先頭で捨てていた。
+        let special: SpecialHit | null = null;
+        if (spec.specialIndex !== undefined) {
+          special = terrain.specialAt(x, z);
+          if (special.index !== spec.specialIndex) continue;
+        }
+
         const h = terrain.heightAt(x, z);
         if (h < 0.8 || h < terrain.waterLevelAt(x, z) + 0.6) continue;
         CTX.h = h;
         CTX.r = hash2(gx, gz, spec.salt);
-        CTX.moisture = terrain.moistureAt(x, z);
-        CTX.temp = terrain.temperatureAt(x, z, h);
-        CTX.special = terrain.specialAt(x, z);
+        if (spec.specialIndex === undefined) {
+          CTX.moisture = terrain.moistureAt(x, z);
+          CTX.temp = terrain.temperatureAt(x, z, h);
+        } else {
+          // 宝物の木は気候を無視する。使い回す CTX に前候補の値を残さない。
+          CTX.moisture = 0;
+          CTX.temp = 0;
+        }
+        CTX.special = special ?? terrain.specialAt(x, z);
         CTX.grove = terrain.groveAt(x, z);
         CTX._t = terrain;
         CTX._x = x;
@@ -209,6 +223,14 @@ export function buildScatterData(
         const z = (gz + hash2(gx, gz, spec.salt + 2)) * spec.spacing;
         if (x < ox || x >= ox + CHUNK_SIZE || z < oz || z >= oz + CHUNK_SIZE) continue;
 
+        // 宝物専用の木は大半のチャンクに存在しない。地形・気候より先に
+        // 区画だけ調べ、桜と秋の全候補を通常地域で評価しないようにする。
+        let special: SpecialHit | null = null;
+        if (spec.specialIndex !== undefined) {
+          special = terrain.specialAt(x, z);
+          if (special.index !== spec.specialIndex) continue;
+        }
+
         const h = terrain.heightAt(x, z);
         // 水面下と、明らかに条件外の場所は重い判定に入る前に落とす。
         if (h < 0.8) continue;
@@ -219,9 +241,14 @@ export function buildScatterData(
         if (h < terrain.waterLevelAt(x, z) + 0.6) continue;
         CTX.h = h;
         CTX.r = r;
-        CTX.moisture = moistureAt(x, z);
-        CTX.temp = terrain.temperatureAt(x, z, h);
-        CTX.special = terrain.specialAt(x, z);
+        if (spec.specialIndex === undefined) {
+          CTX.moisture = moistureAt(x, z);
+          CTX.temp = terrain.temperatureAt(x, z, h);
+        } else {
+          CTX.moisture = 0;
+          CTX.temp = 0;
+        }
+        CTX.special = special ?? terrain.specialAt(x, z);
         CTX.grove = terrain.groveAt(x, z);
         // 傾きと転石はここでは計算しない。place() が触ったときだけ求める。
         CTX._t = terrain;
