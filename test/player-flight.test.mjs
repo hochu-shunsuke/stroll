@@ -40,7 +40,7 @@ function run(player, camera, seconds, step = 1 / 60) {
 
 try {
   const [
-    { Player, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
+    { Player, EYE_HEIGHT, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
     { resolveEntryPointerType },
   ] = await Promise.all([
     server.ssrLoadModule('/src/player/controller.ts'),
@@ -84,30 +84,49 @@ try {
     const player = new Player(flatTerrain, 0, 0);
     const camera = new THREE.PerspectiveCamera();
     player.toggleFlying();
-    // 空から地形を見下ろす角度でも、前進と上昇は同時に成立する。
+    player.position.y = 60;
+    // 空から地形を見下ろす角度でも、上昇ボタン中は前進と上昇が同時に成立する。
     player.pitch = -1.2;
     player.setMoveAxis(0, 1, 0);
     player.onKey('Space', true, false, false);
     run(player, camera, 1);
     player.onKey('Space', false, false, false);
     assert(
-      player.position.z < -55,
+      player.position.z < -20,
       `見下ろし中の前進距離が不足しています: ${player.position.z.toFixed(1)} m`,
     );
     assert(
-      player.position.y > 25,
+      player.position.y > 85,
       `前進と同時に上昇できていません: ${player.position.y.toFixed(1)} m`,
+    );
+  }
+
+  for (const pitch of [0.6, -0.6]) {
+    const player = new Player(flatTerrain, 0, 0);
+    const camera = new THREE.PerspectiveCamera();
+    player.position.y = 100;
+    player.toggleFlying();
+    player.pitch = pitch;
+    player.setMoveAxis(0, 1, 0);
+    run(player, camera, 1);
+    assert(
+      player.position.z < -45,
+      `視線方向へ十分に前進していません: ${player.position.z.toFixed(1)} m`,
+    );
+    assert(
+      pitch > 0 ? player.position.y > 130 : player.position.y < 70,
+      `視線の上下が飛行方向へ反映されていません: pitch=${pitch}, y=${player.position.y.toFixed(1)}`,
     );
   }
 
   {
     const player = new Player(plateauTerrain, 0, 0);
     assert(
-      Math.abs(player.altitudeAboveGround - 1.68) < 0.01,
+      Math.abs(player.altitudeAboveGround - EYE_HEIGHT) < 0.01,
       `地表高が正しくありません: ${player.altitudeAboveGround.toFixed(2)} m`,
     );
     assert(
-      Math.abs(player.altitudeAboveSeaLevel - 121.68) < 0.01,
+      Math.abs(player.altitudeAboveSeaLevel - (120 + EYE_HEIGHT)) < 0.01,
       `HUD用高度が海面基準ではありません: ${player.altitudeAboveSeaLevel.toFixed(2)} m`,
     );
   }

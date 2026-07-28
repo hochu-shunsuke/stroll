@@ -12,7 +12,7 @@ import {
  * 目線の高さ。通信で送る y はこの高さの値なので、
  * 他人のアバターの身長もこれに合わせる必要がある。
  */
-export const EYE_HEIGHT = 1.68;
+export const EYE_HEIGHT = 1.8;
 const WALK_SPEED = 5.4;
 const SPRINT_SPEED = 10.5;
 const SWIM_SPEED = 3.2;
@@ -326,26 +326,29 @@ export class Player {
     const throttle = Math.min(1, Math.hypot(fwd, side));
     const speed = THREE.MathUtils.lerp(FLY_CRUISE_SPEED, FLY_BOOST_SPEED, boost) * throttle;
 
-    // 進路は視線の上下角から切り離す。地形を見下ろしたまま前進しつつ、
-    // Space で上昇できることが空から探す遊びには重要。
+    // 通常は見ている方向へ進む。視線と移動が一致する方が、上昇・降下を含めて直感的。
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     this.targetVelocity.set(
-      -sy * fwd + cy * side,
-      0,
-      -cy * fwd - sy * side,
+      -sy * cp * fwd + cy * side,
+      sp * fwd,
+      -cy * cp * fwd - sy * side,
     );
     if (this.targetVelocity.lengthSq() > 0) {
       this.targetVelocity.normalize().multiplyScalar(speed);
     }
 
-    // 視線と関係なく真上・真下へ動きたいとき用。
-    if (this.keys.has('Space')) this.targetVelocity.y += FLY_VERTICAL_SPEED;
-    if (
+    // 上下ボタンを押している間だけは、見下ろしながらでも確実に上昇、
+    // 見上げながらでも確実に下降する。水平成分は残すので同時移動できる。
+    const rising = this.keys.has('Space');
+    const descending =
       this.keys.has('ControlLeft') ||
       this.keys.has('ControlRight') ||
-      this.keys.has('KeyC')
-    ) {
-      this.targetVelocity.y -= FLY_VERTICAL_SPEED;
+      this.keys.has('KeyC');
+    if (rising !== descending) {
+      this.targetVelocity.y = rising
+        ? Math.max(this.targetVelocity.y, FLY_VERTICAL_SPEED)
+        : Math.min(this.targetVelocity.y, -FLY_VERTICAL_SPEED);
     }
 
     this.velocity.lerp(this.targetVelocity, 1 - Math.exp(-6 * dt));
