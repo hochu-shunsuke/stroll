@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MORNING, Sky } from '../render/sky';
-import { TREE_CATALOG, buildCatalogGeometry } from '../render/treeShape';
+import { TREE_CATALOG, buildCatalogGeometry } from '../render/treeCatalog';
 
 /**
  * 木の見本帳（開発用）。`npm run dev` で /trees.html を開くと出る。

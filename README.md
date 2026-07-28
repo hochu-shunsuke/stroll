@@ -77,16 +77,26 @@ fork する場合は Secrets に `CLOUDFLARE_API_TOKEN` と `CLOUDFLARE_ACCOUNT_
 
 | やりたいこと | 難易度 | どこを触るか |
 |---|---|---|
-| 新しい気候帯 | 易 | `world/terrain.ts` の `shade()` の色 ramp と `scatter.ts` の植生条件 |
+| 新しい気候帯 | 易 | `world/surfaceShade.ts` の色と `world/vegetationSpecs.ts` の植生条件 |
 | 新しい宝物（色の森・草原） | 易 | `world/special.ts` に `forest()`/`meadow()` を 1 行 |
-| 新しい木 | 易 | `vegetationKinds.ts` に KIND、`render/treeShape.ts` の `TREE_CATALOG` に形、`scatter.ts` に配置 |
-| 新しい地形の種類（盆地・砂丘） | 中 | `world/landform.ts` に 1 行、`heightAt()` に高さの式を 1 つ |
-| 村・遺跡 | 中 | `heightAt()` が村の中心付近で平坦な台地へブレンドする |
+| 新しい木 | 易 | `vegetationKinds.ts` に KIND、`render/treeCatalog.ts` に形、`world/vegetationSpecs.ts` に配置 |
+| 新しい地形の種類（盆地・砂丘） | 中 | `world/landform.ts` に 1 行、`world/terrainShape.ts` に高さの式を 1 つ |
+| 村・遺跡 | 中 | `terrainShape.heightAt()` が村の中心付近で平坦な台地へブレンドする |
 | 内陸の湖 | 中 | `world/lake.ts` に 1 行。水面は区画ごとに 1 つの定数なので必ず水平になる |
 | 水のある川 | 難 | 水面が流れに沿って下がる必要がある。**流れの計算ではなく水面の形が壁**（下記） |
 
-`heightAt()` は 1 チャンクあたり約 9,800 回呼ばれる。層を足すほど生成が重くなるので、
-その予算内で考えること。
+最密チャンクは標高だけで `(96+3)² = 9,801` 点を引き、さらに湖・植生の判定が乗る。
+層を足すほど生成が重くなるので、その予算内で考えること。
+
+生成コードは、外向きには `world/terrain.ts` の `Terrain` だけを入口にし、内部を分けている。
+
+- `world/terrainShape.ts` — 大陸度・侵食度・尾根、丘陵・山塊・台地・涸れ谷
+- `world/climate.ts` — 気温・雨陰を含む湿り気・森のまとまり
+- `world/surfaceShade.ts` — 気候帯・砂浜・岩・雪の地面色
+- `world/vegetationSpecs.ts` — 気候ごとの植生条件
+- `world/scatter.ts` — 候補格子、遅延する傾き判定、配置データ化
+- `world/spawn.ts` — 湖・崖・木立を避けた開始地点の選定
+- `render/treeCatalog.ts` — 本番と見本帳が共有する木の一覧
 
 ### 湖はできて、川はできない理由
 
@@ -142,5 +152,7 @@ net（何にも依存しない）      shared（合言葉の決まり。client �
   **文字列リテラル**。ファイルを移動しても型検査では気づけない。
 - `world/special.ts` の宝物抽選はシードを混ぜる。忘れると全世界で宝物が同じ位置に出る。
 - 非インデックスのジオメトリを頂点番号で変形しない（同じ角が裂ける）。座標から乱数を引く。
+- 生成コードを整理するだけなら `test/world-generation.test.mjs` の固定値を変えない。
+  意図して景色を変えるときだけ、画面と統計を確認してスナップショットを更新する。
 
 より詳しい経緯と落とし穴は `CLAUDE.md` に。

@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
-import { TREE_CATALOG, buildCatalogGeometry, paint } from './treeShape';
+import { TREE_CATALOG, buildCatalogGeometry } from './treeCatalog';
+import { paint } from './treeGeometry';
 import { KIND_BUSH, KIND_ROCK } from '../world/vegetationKinds';
 
 /**
  * 木・岩の形と材質。全チャンクで共有する。
  *
- * **木の形は treeShape.ts の TREE_CATALOG にしかない。** 開発用の見本帳
+ * **木の一覧は treeCatalog.ts の TREE_CATALOG にしかない。** 開発用の見本帳
  * （/trees.html）が同じ配列を読むので、ここに形を直接書くと見本帳と食い違う。
  */
 

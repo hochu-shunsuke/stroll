@@ -1,4 +1,5 @@
 import { hash2 } from '../core/rng';
+import { CLIMATE_STEP } from './climate';
 import type { SpecialHit } from './special';
 import { splitsAlongMainDiagonal, type Terrain } from './terrain';
 
@@ -18,20 +19,6 @@ if (LOD_STEPS.length !== LOD_RINGS.length) {
 
 /** 継ぎ目の隙間を隠すためにチャンク外周から下ろすスカートの深さ。 */
 const SKIRT_DEPTH = 30;
-
-/**
- * 湿り気を引く格子の間隔（m）。CHUNK_SIZE を割り切ること。
- *
- * 湿り気は雨陰の計算を含むので重い（1 回 3.4μs。ふつうのノイズの 40 倍）。
- * 四角形ごとに引くと step=2 で 1 チャンク 9,216 回になり、生成が 13ms → 49ms に
- * 跳ね上がって破綻する（一度これで壊した）。
- *
- * 湿り気が変わる波長は 1,100m 以上、雨陰はさらに長い。24m 間隔で引いて
- * 線形補間しても、目に見える差は出ない。
- * CHUNK_SIZE の約数なので、格子点は隣のチャンクと世界座標で一致する
- * （＝継ぎ目で湿り気が飛ばない）。
- */
-const CLIMATE_STEP = 24;
 
 // 割り切れないと格子が隣のチャンクとずれ、継ぎ目に湿り気の段差＝色の帯が出る。
 if (CHUNK_SIZE % CLIMATE_STEP !== 0) {
