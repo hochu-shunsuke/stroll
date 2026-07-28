@@ -17,7 +17,10 @@ const server = await createServer({
 });
 
 try {
-  const [{ MORNING }, { hashSeed }] = await Promise.all([
+  const [
+    { MORNING, CLOUD_HORIZON_FADE_START, CLOUD_HORIZON_FADE_END },
+    { hashSeed },
+  ] = await Promise.all([
     server.ssrLoadModule('/src/render/sky.ts'),
     server.ssrLoadModule('/src/core/rng.ts'),
   ]);
@@ -80,6 +83,22 @@ try {
   const VISIBLE_ALPHA = 0.05;
   const DENSE_ALPHA = 0.1;
 
+  function cloudAlpha(worldX, worldZ, y, seedX, seedY) {
+    const horizonFade = smoothstep(CLOUD_HORIZON_FADE_START, CLOUD_HORIZON_FADE_END, y);
+    if (horizonFade <= 0.001) return 0;
+    const noise = cloudFbm(
+      (worldX / y) * MORNING.cloudScale,
+      (worldZ / y) * MORNING.cloudScale,
+      seedX,
+      seedY,
+    );
+    return (
+      smoothstep(MORNING.cloudLow, MORNING.cloudHigh, noise) *
+      horizonFade *
+      MORNING.cloudAmount
+    );
+  }
+
   function viewMetrics(seed, yaw) {
     const cloudSeed = hashSeed(seed)[0];
     const seedX = (cloudSeed & 0xffff) / 0xffff;
@@ -100,17 +119,7 @@ try {
 
         const worldX = Math.cos(yaw) * x + Math.sin(yaw) * z;
         const worldZ = -Math.sin(yaw) * x + Math.cos(yaw) * z;
-        const projectedY = Math.max(y, 0.075);
-        const noise = cloudFbm(
-          (worldX / projectedY) * MORNING.cloudScale,
-          (worldZ / projectedY) * MORNING.cloudScale,
-          seedX,
-          seedY,
-        );
-        const alpha =
-          smoothstep(MORNING.cloudLow, MORNING.cloudHigh, noise) *
-          smoothstep(0.015, 0.22, y) *
-          MORNING.cloudAmount;
+        const alpha = cloudAlpha(worldX, worldZ, y, seedX, seedY);
         const index = iy * WIDTH + ix;
         if (alpha > VISIBLE_ALPHA) {
           visible++;
@@ -171,6 +180,34 @@ try {
   const largest = views.map((view) => view.largest);
   const visibleMean = visible.reduce((sum, value) => sum + value, 0) / visible.length;
 
+  // 以前は d.y=0.075 で投影距離を固定したため、その円周から下へ同じ雲が
+  // 縦に伸びて「自分中心の雲の端」になった。境界直上でも目に見えない濃さを守る。
+  let horizonEdgeMax = 0;
+  for (let i = 0; i < 64; i++) {
+    const cloudSeed = hashSeed(`e${i.toString(36).padStart(7, '0')}`)[0];
+    const seedX = (cloudSeed & 0xffff) / 0xffff;
+    const seedY = ((cloudSeed >>> 16) & 0xffff) / 0xffff;
+    const y = CLOUD_HORIZON_FADE_START + 0.005;
+    const horizontal = Math.sqrt(1 - y * y);
+    for (let direction = 0; direction < 16; direction++) {
+      const angle = (direction / 16) * Math.PI * 2;
+      horizonEdgeMax = Math.max(
+        horizonEdgeMax,
+        cloudAlpha(
+          Math.sin(angle) * horizontal,
+          Math.cos(angle) * horizontal,
+          y,
+          seedX,
+          seedY,
+        ),
+      );
+    }
+  }
+  assert(
+    horizonEdgeMax < 0.005,
+    `地平付近に雲の投影境界が見えます: alpha=${horizonEdgeMax.toFixed(4)}`,
+  );
+
   assert(visibleMean < 0.25, `平均の雲占有率が高すぎます: ${(visibleMean * 100).toFixed(1)}%`);
   assert(
     percentile(visible, 0.9) < 0.48,
@@ -207,6 +244,7 @@ try {
     `p99 ${(percentile(visible, 0.99) * 100).toFixed(1)}%`,
     `最大雲塊p99 ${(percentile(largest, 0.99) * 100).toFixed(1)}%`,
     `635c8zxx ${(reported.visible * 100).toFixed(1)}%`,
+    `地平境界 ${(horizonEdgeMax * 100).toFixed(2)}%`,
   );
 } finally {
   await server.close();

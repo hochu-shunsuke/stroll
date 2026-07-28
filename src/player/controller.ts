@@ -26,6 +26,9 @@ const FLY_VERTICAL_SPEED = 32;
 const AUTO_CLEARANCE = 52;
 const AUTO_TURN_RATE = 1.05;
 const AUTO_LOOK_AHEAD = [70, 170, 320] as const;
+/** AUTO の進路変更を始める、左右入力の最小量。斜め前進のぶれは含めない。 */
+const AUTO_STEER_START = 0.52;
+const AUTO_STEER_FULL = 0.9;
 const GRAVITY = 26;
 const JUMP_SPEED = 7.2;
 /** 這い上がれる斜面の限界。水平 1 進む間に登れる高さ。 */
@@ -347,7 +350,17 @@ export class Player {
   }
 
   private updateAutoFlight(dt: number, fwd: number, side: number, keyBoost: number): void {
-    this.autoHeading -= side * AUTO_TURN_RATE * dt;
+    // AUTO は「現在の進路を保持」が基本。タッチの斜め前進に混ざる横成分で
+    // 永久に進路がずれないよう、左右が主成分の明確な操作だけを新しい針路として受ける。
+    const sideAmount = Math.abs(side);
+    const dominance = sideAmount - Math.abs(fwd);
+    const steer =
+      sideAmount > AUTO_STEER_START && dominance > 0
+        ? Math.sign(side) *
+          THREE.MathUtils.smoothstep(sideAmount, AUTO_STEER_START, AUTO_STEER_FULL) *
+          THREE.MathUtils.smoothstep(dominance, 0, 0.35)
+        : 0;
+    this.autoHeading -= steer * AUTO_TURN_RATE * dt;
     const cy = Math.cos(this.autoHeading);
     const sy = Math.sin(this.autoHeading);
 

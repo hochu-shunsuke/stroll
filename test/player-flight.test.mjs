@@ -52,6 +52,21 @@ try {
   {
     const player = new Player(flatTerrain, 0, 0);
     const camera = new THREE.PerspectiveCamera();
+    player.position.y = 60;
+    player.toggleFlying();
+    player.toggleAutoFlight();
+    // 前へ倒した指のわずかな横ずれは、AUTO の針路を永久に変えてはいけない。
+    player.setMoveAxis(0.25, 0.85, 0);
+    run(player, camera, 2);
+    assert(
+      Math.abs(player.position.x) < 1,
+      `斜め前進のぶれで進路がずれています: x=${player.position.x.toFixed(2)}`,
+    );
+  }
+
+  {
+    const player = new Player(flatTerrain, 0, 0);
+    const camera = new THREE.PerspectiveCamera();
     player.toggleFlying();
     player.setMoveAxis(0, 1, 1);
     run(player, camera, 3);
@@ -94,10 +109,17 @@ try {
     player.toggleAutoFlight();
     // 横へいっぱい倒すのは急旋回であって、高速飛行の指示ではない。
     player.setMoveAxis(1, 0, 1);
-    run(player, camera, 3);
+    run(player, camera, 1.2);
     assert(
       player.speed <= FLY_CRUISE_SPEED + 0.2,
       `タッチ旋回だけで高速になっています: ${player.speed.toFixed(2)} m/s`,
+    );
+    const beforeRelease = player.position.clone();
+    player.setMoveAxis(0, 0, 0);
+    run(player, camera, 1.5);
+    assert(
+      Math.abs(player.position.x - beforeRelease.x) > 40,
+      '明確に設定した新しい進路が、入力を離した後に保持されていません',
     );
   }
 

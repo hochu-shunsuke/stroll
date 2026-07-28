@@ -480,7 +480,7 @@ function main(): void {
     if (player.autoFlight !== lastAutoFlight) {
       lastAutoFlight = player.autoFlight;
       if (player.autoFlight) {
-        overlay.flash('オートフライト。視点は自由に動かせます。');
+        overlay.flash('AUTO：視点は自由。左右を大きく入れると進路を変えます。');
         void requestWakeLock();
       } else {
         void releaseWakeLock();

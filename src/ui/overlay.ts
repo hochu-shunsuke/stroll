@@ -95,7 +95,7 @@ export class Overlay {
               <li><kbd>M</kbd> 消音</li>
               <li><kbd>Esc</kbd> 一時停止</li>
             </ul>
-            <p class="controls-note">飛行中は <kbd>Space</kbd> 上昇、<kbd>C</kbd> 下降。自動飛行中は視点を自由に動かせます。</p>
+            <p class="controls-note">飛行中は <kbd>Space</kbd> 上昇、<kbd>C</kbd> 下降。自動飛行中は視点が自由で、左右だけを押すと新しい進路を保ちます。</p>
           </details>
         </div>
       </div>

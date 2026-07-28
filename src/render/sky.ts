@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { RENDER_ORDER } from './order';
 
+/** 水平面への投影が急になる地平付近は、雲を朝もやへ溶かし切る。 */
+export const CLOUD_HORIZON_FADE_START = 0.075;
+export const CLOUD_HORIZON_FADE_END = 0.22;
+
 const vert = /* glsl */ `
   varying vec3 vDir;
   void main() {
@@ -74,10 +78,17 @@ const frag = /* glsl */ `
 
     // 雲。視線を「一定の高さの水平な板」に投影して模様を引く。
     // 板までの距離が d.y で決まるので、地平に近いほど模様が伸びて遠近が出る。
-    // 頂点も texture も増えない。空の半分が無地なのが一番もったいなかった。
-    float horizonFade = smoothstep(0.015, 0.22, d.y);
+    //
+    // d.y を途中で固定すると、その円周から下で同じ模様が縦に伸び、
+    // 自分を中心にした雲の端として見える。投影が急になる前に朝もやへ
+    // 滑らかに溶かし、描く範囲では本来の d.y をそのまま使う。
+    float horizonFade = smoothstep(
+      ${CLOUD_HORIZON_FADE_START.toFixed(3)},
+      ${CLOUD_HORIZON_FADE_END.toFixed(3)},
+      d.y
+    );
     if (horizonFade > 0.001) {
-      vec2 cp = (d.xz / max(d.y, 0.075)) * uCloudScale
+      vec2 cp = (d.xz / d.y) * uCloudScale
               + vec2(uCloudTime, uCloudTime * 0.35);
       float n = cloudFbm(cp);
       float thick = smoothstep(uCloudLow, uCloudHigh, n);
