@@ -11,12 +11,31 @@ export interface AmbienceParams {
 
 /** この速度までは無音。歩いているだけで風が鳴ると落ち着かない。 */
 const SILENT_BELOW = 4;
-/** 巡航の風。高速域は別の細い風切り音へ受け渡す。 */
-const CRUISE_FULL_AT = 82;
-const MAX_GAIN = 0.17;
-const FAST_FROM = 58;
-const FAST_FULL_AT = 112;
-const FAST_MAX_GAIN = 0.11;
+/** 最高速でようやく最大になる。巡航時から風が主張しすぎないようにする。 */
+const WIND_FULL_AT = 112;
+const WIND_MAX_GAIN = 0.105;
+const WIND_CUTOFF_MIN = 140;
+const WIND_CUTOFF_MAX = 430;
+
+export interface WindProfile {
+  gain: number;
+  cutoff: number;
+}
+
+/**
+ * 速度から風の音量と低域フィルターを決める。
+ * 高速専用の白色ノイズは耳障りなシャー音になるため、ここには足さない。
+ */
+export function windProfile(speed: number): WindProfile {
+  const t = Math.min(
+    1,
+    Math.max(0, (speed - SILENT_BELOW) / (WIND_FULL_AT - SILENT_BELOW)),
+  );
+  return {
+    gain: Math.pow(t, 1.35) * WIND_MAX_GAIN,
+    cutoff: WIND_CUTOFF_MIN + t * (WIND_CUTOFF_MAX - WIND_CUTOFF_MIN),
+  };
+}
 
 /**
  * 風は自分が動いたときだけ鳴る。立ち止まれば静かになる。
@@ -27,8 +46,6 @@ export class Ambience {
   private engine: AudioEngine;
   private gain: GainNode;
   private filter: BiquadFilterNode;
-  private fastGain: GainNode;
-  private fastFilter: BiquadFilterNode;
   private birdBus: GainNode;
   private birdTimer = 6;
 
@@ -45,15 +62,6 @@ export class Ambience {
     this.gain.gain.value = 0;
     src.connect(this.filter).connect(this.gain).connect(engine.master);
 
-    const fast = engine.loopNoise('white');
-    this.fastFilter = ctx.createBiquadFilter();
-    this.fastFilter.type = 'bandpass';
-    this.fastFilter.frequency.value = 950;
-    this.fastFilter.Q.value = 0.55;
-    this.fastGain = ctx.createGain();
-    this.fastGain.gain.value = 0;
-    fast.connect(this.fastFilter).connect(this.fastGain).connect(engine.master);
-
     this.birdBus = ctx.createGain();
     this.birdBus.gain.value = 1;
     this.birdBus.connect(engine.master);
@@ -65,20 +73,10 @@ export class Ambience {
   update(dt: number, p: AmbienceParams): void {
     const now = this.engine.ctx.currentTime;
 
-    // 速いほど強く、そして高く鳴る。速度感がそのまま音になる。
-    const t = Math.min(
-      1,
-      Math.max(0, (p.speed - SILENT_BELOW) / (CRUISE_FULL_AT - SILENT_BELOW)),
-    );
-    const level = Math.pow(t, 1.15) * MAX_GAIN;
-    // 加速に少し遅れて追いつく程度の速さで。即座に切り替わると不自然。
-    this.gain.gain.setTargetAtTime(level, now, 0.18);
-    this.filter.frequency.setTargetAtTime(190 + t * 760, now, 0.25);
-
-    // 速い風だけを高い帯域へ足す。巡航と高速移動を耳でも区別できる。
-    const fast = Math.min(1, Math.max(0, (p.speed - FAST_FROM) / (FAST_FULL_AT - FAST_FROM)));
-    this.fastGain.gain.setTargetAtTime(Math.pow(fast, 1.35) * FAST_MAX_GAIN, now, 0.16);
-    this.fastFilter.frequency.setTargetAtTime(850 + fast * 1350, now, 0.2);
+    // ブラウンノイズの低い風だけを、加速に少し遅れて追従させる。
+    const wind = windProfile(p.speed);
+    this.gain.gain.setTargetAtTime(wind.gain, now, 0.24);
+    this.filter.frequency.setTargetAtTime(wind.cutoff, now, 0.32);
 
     const birdProximity = 1 - smoothstep(24, 115, p.altitude);
     this.birdBus.gain.setTargetAtTime(birdProximity, now, 0.5);

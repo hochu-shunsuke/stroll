@@ -569,6 +569,115 @@ kbd {
   opacity: 1;
 }
 
+.friend-compass {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.friend-compass.on {
+  opacity: 1;
+}
+
+.friend-compass.dim {
+  opacity: 0;
+}
+
+.friend-edge-marker {
+  position: absolute;
+  max-width: 190px;
+  display: grid;
+  grid-template-columns: 22px minmax(24px, auto) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(12, 20, 26, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 3px 15px rgba(4, 10, 14, 0.16);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%);
+  transition: left 170ms linear, top 170ms linear;
+}
+
+.friend-arrow {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 15px;
+  line-height: 1;
+  color: #f3f7f5;
+  background: rgba(255, 255, 255, 0.12);
+  transform-origin: center;
+}
+
+.friend-name {
+  min-width: 0;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.friend-distance {
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.keyboard-guide {
+  position: absolute;
+  left: 50%;
+  bottom: max(42px, calc(env(safe-area-inset-bottom) + 24px));
+  width: min(760px, calc(100vw - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px 14px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(12, 20, 26, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 5px 24px rgba(4, 10, 14, 0.16);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 350ms ease, transform 350ms ease;
+}
+
+.keyboard-guide span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 10.5px;
+}
+
+.keyboard-guide kbd {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.keyboard-guide.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+:root[data-input='touch'] .keyboard-guide {
+  display: none;
+}
+
 .toast {
   position: absolute;
   left: 50%;
@@ -588,6 +697,30 @@ kbd {
 .toast.on {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+.keyboard-guide.on + .toast {
+  bottom: 106px;
+}
+
+@media (max-width: 680px) {
+  .keyboard-guide {
+    gap: 6px 10px;
+    padding-inline: 12px;
+  }
+
+  .friend-name {
+    max-width: 70px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .friend-compass,
+  .friend-edge-marker,
+  .keyboard-guide,
+  .toast {
+    transition: none;
+  }
 }
 
 /* 内ブラウザの上下バーで高さが削られても、開始ボタンを最初から見せる。 */

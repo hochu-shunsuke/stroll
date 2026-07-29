@@ -10,6 +10,7 @@ import { Water } from './render/water';
 import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
+import { friendEdgeIndicators } from './ui/friendCompass';
 import { normalizeSeed, randomSeed } from '../shared/seed';
 import { hashSeed } from './core/rng';
 import {
@@ -141,6 +142,7 @@ function main(): void {
   let lastAutoFlight = false;
   let saveElapsed = 0;
   let audioUnavailable = false;
+  let friendUiElapsed = 0;
 
   /** 初回の挨拶にも毎回の送信にも同じものを使う。片方だけ変わると位置がずれる。 */
   const playerState = (): PlayerState => ({
@@ -230,6 +232,7 @@ function main(): void {
   function startPlaying(): void {
     playing = true;
     overlay.hide();
+    overlay.showKeyboardGuide();
     touchControls?.setActive(inputMode === 'touch');
     if (player.autoFlight) void requestWakeLock();
   }
@@ -529,6 +532,22 @@ function main(): void {
       overlay.setPeers(connection.peerCount, netMessage);
     }
     avatars.update(dt, camera);
+    friendUiElapsed += dt;
+    if (friendUiElapsed >= 0.15) {
+      friendUiElapsed = 0;
+      overlay.setFriendDirections(
+        playing
+          ? friendEdgeIndicators(
+              player.position.x,
+              player.position.y,
+              player.position.z,
+              player.yaw,
+              player.pitch,
+              avatars.friendPositions(),
+            )
+          : [],
+      );
+    }
 
     const shouldRender = playing || elapsed - lastIdleRender >= 1 / 20;
     if (shouldRender) {

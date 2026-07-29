@@ -42,9 +42,11 @@ try {
   const [
     { Player, EYE_HEIGHT, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
     { resolveEntryPointerType },
+    { friendEdgeIndicators, formatFriendDistance },
   ] = await Promise.all([
     server.ssrLoadModule('/src/player/controller.ts'),
     server.ssrLoadModule('/src/ui/overlay.ts'),
+    server.ssrLoadModule('/src/ui/friendCompass.ts'),
   ]);
 
   assert.equal(
@@ -67,6 +69,37 @@ try {
     'keyboard',
     '直前にタッチしていてもキーボード操作をタッチへ誤分類しています',
   );
+
+  {
+    const directions = friendEdgeIndicators(0, 0, 0, 0, 0, [
+      { id: 'right-back', name: '右後ろ', x: 100, y: 0, z: 100 },
+      { id: 'front', name: '前', x: 0, y: 0, z: -20 },
+      { id: 'front-up', name: '上前方', x: 0, y: 40, z: -30 },
+      { id: 'back', name: '後ろ', x: 0, y: 0, z: 60 },
+    ]);
+    assert.deepEqual(
+      directions.map((direction) => direction.name),
+      ['前', '上前方', '後ろ', '右後ろ'],
+      '友達が近い順に並んでいません',
+    );
+    assert(directions[0].directionY < 0, '正面の友達を上端へ示していません');
+    assert(
+      directions.find((direction) => direction.name === '右後ろ').directionX > 0,
+      '右後ろの友達を右端へ示していません',
+    );
+    assert(
+      directions.find((direction) => direction.name === '上前方').directionY <
+        directions[0].directionY,
+      '上前方の友達が正面より上寄りになっていません',
+    );
+    assert(
+      directions.find((direction) => direction.name === '後ろ').directionY > 0,
+      '後ろの友達を下端へ示していません',
+    );
+    assert.equal(formatFriendDistance(999.4), '999 m');
+    assert.equal(formatFriendDistance(1_260), '1.3 km');
+    assert.equal(formatFriendDistance(12_600), '13 km');
+  }
 
   {
     const player = new Player(flatTerrain, 0, 0);

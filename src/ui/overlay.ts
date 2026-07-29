@@ -1,4 +1,5 @@
 import { SeedField } from './seedField';
+import { formatFriendDistance, type FriendEdgeIndicator } from './friendCompass';
 
 export interface OverlayHandlers {
   onStart: (resume: boolean, pointerType: string) => void;
@@ -8,6 +9,13 @@ export interface OverlayHandlers {
 
 const NAME_KEY = 'stroll:name';
 const MAX_NAME_LENGTH = 16;
+
+interface FriendMarkerElements {
+  root: HTMLElement;
+  arrow: HTMLElement;
+  name: HTMLElement;
+  distance: HTMLElement;
+}
 
 /**
  * 開始画面と、歩いている間の最小限の表示。
@@ -21,6 +29,8 @@ export class Overlay {
   private freshBtn: HTMLButtonElement;
   private hud: HTMLElement;
   private flightHud: HTMLElement;
+  private friendCompass: HTMLElement;
+  private keyboardGuide: HTMLElement;
   private toast: HTMLElement;
   private seed: string;
   private handlers: OverlayHandlers;
@@ -32,6 +42,9 @@ export class Overlay {
   private peers: HTMLElement;
   private peersText = '';
   private flightText = '';
+  private friendMarkers = new Map<string, FriendMarkerElements>();
+  private keyboardGuideTimer = 0;
+  private keyboardGuideShown = false;
   private touch: boolean;
   private touchCapable: boolean;
   private resumable: boolean;
@@ -107,6 +120,17 @@ export class Overlay {
         <span class="hud-peers"></span>
       </div>
       <div class="flight-hud"></div>
+      <div class="friend-compass" aria-label="友達の方向" aria-hidden="true"></div>
+      <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
+        <span><kbd>WASD</kbd> 移動</span>
+        <span><kbd>マウス</kbd> 見る</span>
+        <span><kbd>Shift</kbd> 加速</span>
+        <span><kbd>Space</kbd> 跳ぶ／上昇</span>
+        <span><kbd>C</kbd> 下降</span>
+        <span><kbd>F</kbd> 飛行</span>
+        <span><kbd>R</kbd> AUTO</span>
+        <span><kbd>Esc</kbd> 休憩</span>
+      </div>
       <div class="toast"></div>
     `;
 
@@ -116,6 +140,8 @@ export class Overlay {
     this.freshBtn = this.root.querySelector('.fresh')!;
     this.hud = this.root.querySelector('.hud')!;
     this.flightHud = this.root.querySelector('.flight-hud')!;
+    this.friendCompass = this.root.querySelector('.friend-compass')!;
+    this.keyboardGuide = this.root.querySelector('.keyboard-guide')!;
     this.toast = this.root.querySelector('.toast')!;
 
     this.peers = this.root.querySelector('.hud-peers')!;
@@ -200,6 +226,182 @@ export class Overlay {
     this.peers.textContent = text;
   }
 
+  /**
+   * 友達を、その人がいる方向の画面端へ置く。
+   * 同じ方向に複数人いるときは端に沿って交互にずらし、完全には重ねない。
+   * 名前は通信由来なので innerHTML へ入れず、必ず textContent で組み立てる。
+  */
+  setFriendDirections(friends: readonly FriendEdgeIndicator[]): void {
+    // 1部屋は最大10人なので、自分以外の9人を全員出せる。
+    const limit = 9;
+    const visible = friends.slice(0, limit);
+    const centerX = innerWidth / 2;
+    const centerY = innerHeight / 2;
+    const leftBound = Math.min(centerX, this.touch ? 80 : 96);
+    const rightBound = Math.max(centerX, innerWidth - (this.touch ? 116 : 96));
+    const topBound = Math.min(centerY, this.touch ? 62 : 64);
+    const bottomBound = Math.max(centerY, innerHeight - (this.touch ? 74 : 126));
+    const activeIds = new Set<string>();
+    const placedMarkers: { x: number; y: number; width: number }[] = [];
+
+    for (const friend of visible) {
+      activeIds.add(friend.id);
+      const distanceText = formatFriendDistance(friend.distance);
+      let directionX = friend.directionX;
+      let directionY = friend.directionY;
+      let directionLength = Math.hypot(directionX, directionY);
+      if (directionLength < 0.001) {
+        directionX = 0;
+        directionY = -1;
+        directionLength = 1;
+      }
+
+      const reachX =
+        directionX >= 0 ? rightBound - centerX : centerX - leftBound;
+      const reachY =
+        directionY >= 0 ? bottomBound - centerY : centerY - topBound;
+      const scaleX =
+        Math.abs(directionX) > 0.0001 ? reachX / Math.abs(directionX) : Infinity;
+      const scaleY =
+        Math.abs(directionY) > 0.0001 ? reachY / Math.abs(directionY) : Infinity;
+      const edgeScale = Math.min(scaleX, scaleY);
+
+      let markerX = centerX + directionX * edgeScale;
+      let markerY = centerY + directionY * edgeScale;
+      let markerTopBound = topBound;
+      let markerBottomBound = bottomBound;
+      const pointsToTouchButtons =
+        this.touch &&
+        directionX > 0 &&
+        Math.abs(directionX) > Math.abs(directionY) * 0.65;
+      if (pointsToTouchButtons) {
+        // 右端には休憩・AUTO・飛行・上昇が並ぶ。方向は右のまま、
+        // そのボタン列の間にある安全な区間へ寄せる。
+        markerTopBound = Math.max(topBound, 78);
+        markerBottomBound = Math.min(bottomBound, Math.max(78, innerHeight - 258));
+        markerY = Math.max(markerTopBound, Math.min(markerBottomBound, markerY));
+      }
+
+      // 先に置いた人と重なる場合は、端の接線に沿って交互に逃がす。
+      const estimatedWidth = Math.min(
+        190,
+        52 + Array.from(friend.name).length * 8 + distanceText.length * 5.5,
+      );
+      const tangentX = -directionY / directionLength;
+      const tangentY = directionX / directionLength;
+      const sideEdge = Math.abs(directionX) > Math.abs(directionY);
+      const laneStep = sideEdge ? 38 : Math.max(108, estimatedWidth);
+      const baseX = markerX;
+      const baseY = markerY;
+      let overlaps = false;
+      for (let attempt = 0; attempt < 11; attempt++) {
+        const lane =
+          attempt === 0
+            ? 0
+            : Math.ceil(attempt / 2) * (attempt % 2 === 1 ? 1 : -1);
+        const candidateX = Math.max(
+          leftBound,
+          Math.min(rightBound, baseX + tangentX * lane * laneStep),
+        );
+        const candidateY = Math.max(
+          markerTopBound,
+          Math.min(markerBottomBound, baseY + tangentY * lane * laneStep),
+        );
+        overlaps = placedMarkers.some(
+          (placed) =>
+            Math.abs(candidateX - placed.x) <
+              (estimatedWidth + placed.width) / 2 + 7 &&
+            Math.abs(candidateY - placed.y) < 36,
+        );
+        markerX = candidateX;
+        markerY = candidateY;
+        if (!overlaps) break;
+      }
+      // 極端に背が低い横画面で接線方向に逃げ場がない場合は、
+      // 画面中心側へ2列目・3列目を作る。
+      if (overlaps) {
+        const inwardStep = sideEdge ? estimatedWidth + 10 : 40;
+        for (let lane = 1; lane <= 4; lane++) {
+          const candidateX = Math.max(
+            leftBound,
+            Math.min(
+              rightBound,
+              baseX - (directionX / directionLength) * lane * inwardStep,
+            ),
+          );
+          const candidateY = Math.max(
+            topBound,
+            Math.min(
+              bottomBound,
+              baseY - (directionY / directionLength) * lane * inwardStep,
+            ),
+          );
+          overlaps = placedMarkers.some(
+            (placed) =>
+              Math.abs(candidateX - placed.x) <
+                (estimatedWidth + placed.width) / 2 + 7 &&
+              Math.abs(candidateY - placed.y) < 36,
+          );
+          markerX = candidateX;
+          markerY = candidateY;
+          if (!overlaps) break;
+        }
+      }
+      placedMarkers.push({ x: markerX, y: markerY, width: estimatedWidth });
+
+      let marker = this.friendMarkers.get(friend.id);
+      if (!marker) {
+        const root = document.createElement('div');
+        root.className = 'friend-edge-marker';
+
+        const arrow = document.createElement('span');
+        arrow.className = 'friend-arrow';
+        arrow.ariaHidden = 'true';
+        arrow.textContent = '↑';
+
+        const name = document.createElement('span');
+        name.className = 'friend-name';
+
+        const distance = document.createElement('span');
+        distance.className = 'friend-distance';
+
+        root.append(arrow, name, distance);
+        this.friendCompass.appendChild(root);
+        marker = { root, arrow, name, distance };
+        this.friendMarkers.set(friend.id, marker);
+      }
+
+      marker.root.ariaLabel = `${friend.name}、${distanceText}`;
+      marker.root.style.left = `${markerX}px`;
+      marker.root.style.top = `${markerY}px`;
+      marker.arrow.style.transform = `rotate(${friend.rotation}rad)`;
+      marker.name.textContent = friend.name;
+      marker.distance.textContent = distanceText;
+    }
+
+    for (const [id, marker] of this.friendMarkers) {
+      if (activeIds.has(id)) continue;
+      marker.root.remove();
+      this.friendMarkers.delete(id);
+    }
+
+    this.friendCompass.classList.toggle('on', friends.length > 0);
+    this.friendCompass.ariaHidden = friends.length > 0 ? 'false' : 'true';
+  }
+
+  /** PC で最初に世界へ入ったときだけ、操作を15秒見せる。 */
+  showKeyboardGuide(): void {
+    if (this.touch || this.keyboardGuideShown) return;
+    this.keyboardGuideShown = true;
+    this.keyboardGuide.classList.add('on');
+    this.keyboardGuide.ariaHidden = 'false';
+    clearTimeout(this.keyboardGuideTimer);
+    this.keyboardGuideTimer = window.setTimeout(() => {
+      this.keyboardGuide.classList.remove('on');
+      this.keyboardGuide.ariaHidden = 'true';
+    }, 15_000);
+  }
+
   /** 足元の地形が揃ったら歩き始められるようにする。 */
   setReady(): void {
     if (this.ready) return;
@@ -211,6 +413,10 @@ export class Overlay {
 
   setInputMode(touch: boolean): void {
     this.touch = touch;
+    if (touch) {
+      this.keyboardGuide.classList.remove('on');
+      this.keyboardGuide.ariaHidden = 'true';
+    }
     if (this.ready) this.updateStartLabel();
   }
 
@@ -257,12 +463,19 @@ export class Overlay {
   show(message?: string): void {
     this.veil.classList.remove('hidden');
     this.hud.classList.add('dim');
+    this.friendCompass.classList.add('dim');
+    this.keyboardGuide.classList.remove('on');
+    this.friendCompass.ariaHidden = 'true';
+    this.keyboardGuide.ariaHidden = 'true';
     if (message) this.status.textContent = message;
   }
 
   hide(): void {
     this.veil.classList.add('hidden');
     this.hud.classList.remove('dim');
+    this.friendCompass.classList.remove('dim');
+    this.friendCompass.ariaHidden =
+      this.friendCompass.classList.contains('on') ? 'false' : 'true';
   }
 
   private async copyUrl(): Promise<void> {
