@@ -1,5 +1,9 @@
 import { SeedField } from './seedField';
-import { formatFriendDistance, type FriendEdgeIndicator } from './friendCompass';
+import {
+  formatFriendDistance,
+  formatVerticalDifference,
+  type FriendIndicator,
+} from './friendCompass';
 
 export interface OverlayHandlers {
   onStart: (resume: boolean, pointerType: string) => void;
@@ -15,6 +19,7 @@ interface FriendMarkerElements {
   arrow: HTMLElement;
   name: HTMLElement;
   distance: HTMLElement;
+  altitude: HTMLElement;
 }
 
 /**
@@ -120,7 +125,7 @@ export class Overlay {
         <span class="hud-peers"></span>
       </div>
       <div class="flight-hud"></div>
-      <div class="friend-compass" aria-label="友達の方向" aria-hidden="true"></div>
+      <div class="friend-compass" aria-label="友達と光の輪の方向" aria-hidden="true"></div>
       <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
         <span><kbd>WASD</kbd> 移動</span>
         <span><kbd>マウス</kbd> 見る</span>
@@ -231,10 +236,10 @@ export class Overlay {
    * 同じ方向に複数人いるときは端に沿って交互にずらし、完全には重ねない。
    * 名前は通信由来なので innerHTML へ入れず、必ず textContent で組み立てる。
   */
-  setFriendDirections(friends: readonly FriendEdgeIndicator[]): void {
-    // 1部屋は最大10人なので、自分以外の9人を全員出せる。
-    const limit = 9;
-    const visible = friends.slice(0, limit);
+  setFriendDirections(friends: readonly FriendIndicator[]): void {
+    // 1部屋は自分以外の最大9人。光の輪を加えた10個まで全員出せる。
+    const limit = 10;
+    const visible = friends.filter((friend) => friend.mode !== 'near').slice(0, limit);
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const leftBound = Math.min(centerX, this.touch ? 80 : 96);
@@ -246,7 +251,8 @@ export class Overlay {
 
     for (const friend of visible) {
       activeIds.add(friend.id);
-      const distanceText = formatFriendDistance(friend.distance);
+      const distanceText = formatFriendDistance(friend.distance, this.touch);
+      const altitudeText = formatVerticalDifference(friend.verticalDifference, this.touch);
       let directionX = friend.directionX;
       let directionY = friend.directionY;
       let directionLength = Math.hypot(directionX, directionY);
@@ -256,21 +262,30 @@ export class Overlay {
         directionLength = 1;
       }
 
-      const reachX =
-        directionX >= 0 ? rightBound - centerX : centerX - leftBound;
-      const reachY =
-        directionY >= 0 ? bottomBound - centerY : centerY - topBound;
-      const scaleX =
-        Math.abs(directionX) > 0.0001 ? reachX / Math.abs(directionX) : Infinity;
-      const scaleY =
-        Math.abs(directionY) > 0.0001 ? reachY / Math.abs(directionY) : Infinity;
-      const edgeScale = Math.min(scaleX, scaleY);
-
-      let markerX = centerX + directionX * edgeScale;
-      let markerY = centerY + directionY * edgeScale;
+      let markerX: number;
+      let markerY: number;
+      if (friend.mode === 'onscreen') {
+        markerX = centerX + directionX * centerX;
+        markerY = centerY + directionY * centerY - 12;
+      } else {
+        const reachX =
+          directionX >= 0 ? rightBound - centerX : centerX - leftBound;
+        const reachY =
+          directionY >= 0 ? bottomBound - centerY : centerY - topBound;
+        const scaleX =
+          Math.abs(directionX) > 0.0001 ? reachX / Math.abs(directionX) : Infinity;
+        const scaleY =
+          Math.abs(directionY) > 0.0001 ? reachY / Math.abs(directionY) : Infinity;
+        const edgeScale = Math.min(scaleX, scaleY);
+        markerX = centerX + directionX * edgeScale;
+        markerY = centerY + directionY * edgeScale;
+      }
+      markerX = Math.max(leftBound, Math.min(rightBound, markerX));
+      markerY = Math.max(topBound, Math.min(bottomBound, markerY));
       let markerTopBound = topBound;
       let markerBottomBound = bottomBound;
       const pointsToTouchButtons =
+        friend.mode === 'offscreen' &&
         this.touch &&
         directionX > 0 &&
         Math.abs(directionX) > Math.abs(directionY) * 0.65;
@@ -284,13 +299,22 @@ export class Overlay {
 
       // 先に置いた人と重なる場合は、端の接線に沿って交互に逃がす。
       const estimatedWidth = Math.min(
-        190,
-        52 + Array.from(friend.name).length * 8 + distanceText.length * 5.5,
+        this.touch ? 178 : 230,
+        (this.touch ? 44 : 58) +
+          Array.from(friend.name).length * (this.touch ? 7 : 8) +
+          distanceText.length * (this.touch ? 4.7 : 5.5) +
+          altitudeText.length * (this.touch ? 4.7 : 5.5),
       );
       const tangentX = -directionY / directionLength;
       const tangentY = directionX / directionLength;
-      const sideEdge = Math.abs(directionX) > Math.abs(directionY);
-      const laneStep = sideEdge ? 38 : Math.max(108, estimatedWidth);
+      const sideEdge =
+        friend.mode === 'offscreen' && Math.abs(directionX) > Math.abs(directionY);
+      const laneStep =
+        friend.mode === 'onscreen'
+          ? 34
+          : sideEdge
+            ? 38
+            : Math.max(108, estimatedWidth);
       const baseX = markerX;
       const baseY = markerY;
       let overlaps = false;
@@ -365,18 +389,36 @@ export class Overlay {
         const distance = document.createElement('span');
         distance.className = 'friend-distance';
 
-        root.append(arrow, name, distance);
+        const altitude = document.createElement('span');
+        altitude.className = 'friend-altitude';
+
+        root.append(arrow, name, distance, altitude);
         this.friendCompass.appendChild(root);
-        marker = { root, arrow, name, distance };
+        marker = { root, arrow, name, distance, altitude };
         this.friendMarkers.set(friend.id, marker);
       }
 
-      marker.root.ariaLabel = `${friend.name}、${distanceText}`;
-      marker.root.style.left = `${markerX}px`;
-      marker.root.style.top = `${markerY}px`;
-      marker.arrow.style.transform = `rotate(${friend.rotation}rad)`;
-      marker.name.textContent = friend.name;
-      marker.distance.textContent = distanceText;
+      const destination = friend.kind === 'destination';
+      const onscreen = friend.mode === 'onscreen';
+      marker.root.classList.toggle('destination-edge-marker', destination);
+      marker.root.classList.toggle('onscreen-friend-marker', onscreen);
+      const ariaLabel =
+        `${friend.name}、${distanceText}` + (altitudeText ? `、${altitudeText}` : '');
+      if (marker.root.ariaLabel !== ariaLabel) marker.root.ariaLabel = ariaLabel;
+      marker.root.style.transform =
+        `translate3d(${markerX}px, ${markerY}px, 0) ` +
+        (onscreen ? 'translate(-50%, -112%)' : 'translate(-50%, -50%)');
+      const arrowText = destination ? '○' : onscreen ? '' : '↑';
+      if (marker.arrow.textContent !== arrowText) marker.arrow.textContent = arrowText;
+      marker.arrow.style.transform =
+        destination || onscreen ? 'none' : `rotate(${friend.rotation}rad)`;
+      if (marker.name.textContent !== friend.name) marker.name.textContent = friend.name;
+      if (marker.distance.textContent !== distanceText) {
+        marker.distance.textContent = distanceText;
+      }
+      if (marker.altitude.textContent !== altitudeText) {
+        marker.altitude.textContent = altitudeText;
+      }
     }
 
     for (const [id, marker] of this.friendMarkers) {

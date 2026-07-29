@@ -42,7 +42,7 @@ try {
   const [
     { Player, EYE_HEIGHT, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
     { resolveEntryPointerType },
-    { friendEdgeIndicators, formatFriendDistance },
+    { friendIndicators, formatFriendDistance, formatVerticalDifference },
   ] = await Promise.all([
     server.ssrLoadModule('/src/player/controller.ts'),
     server.ssrLoadModule('/src/ui/overlay.ts'),
@@ -71,34 +71,84 @@ try {
   );
 
   {
-    const directions = friendEdgeIndicators(0, 0, 0, 0, 0, [
+    const friendCamera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 9_000);
+    friendCamera.position.set(0, 0, 0);
+    friendCamera.lookAt(0, 0, -1);
+    friendCamera.updateProjectionMatrix();
+    friendCamera.updateMatrixWorld();
+    const directions = friendIndicators(friendCamera, { x: 0, y: 0, z: 0 }, [
       { id: 'right-back', name: '右後ろ', x: 100, y: 0, z: 100 },
       { id: 'front', name: '前', x: 0, y: 0, z: -20 },
       { id: 'front-up', name: '上前方', x: 0, y: 40, z: -30 },
       { id: 'back', name: '後ろ', x: 0, y: 0, z: 60 },
+      { id: 'front-far', name: '遠い正面', x: 0, y: 0, z: -180 },
     ]);
     assert.deepEqual(
       directions.map((direction) => direction.name),
-      ['前', '上前方', '後ろ', '右後ろ'],
+      ['前', '上前方', '後ろ', '右後ろ', '遠い正面'],
       '友達が近い順に並んでいません',
     );
-    assert(directions[0].directionY < 0, '正面の友達を上端へ示していません');
+    assert.equal(
+      directions.find((direction) => direction.name === '前').mode,
+      'near',
+      '視界内の近い友達が端ナビから消えません',
+    );
+    assert.equal(
+      directions.find((direction) => direction.name === '遠い正面').mode,
+      'onscreen',
+      '視界内の遠い友達が実位置表示になりません',
+    );
     assert(
       directions.find((direction) => direction.name === '右後ろ').directionX > 0,
       '右後ろの友達を右端へ示していません',
     );
     assert(
-      directions.find((direction) => direction.name === '上前方').directionY <
-        directions[0].directionY,
-      '上前方の友達が正面より上寄りになっていません',
+      directions.find((direction) => direction.name === '上前方').verticalDifference === 40,
+      '上前方の友達の高さ差が分離されていません',
     );
-    assert(
-      directions.find((direction) => direction.name === '後ろ').directionY > 0,
-      '後ろの友達を下端へ示していません',
+    assert.equal(
+      directions.find((direction) => direction.name === '後ろ').mode,
+      'offscreen',
+      '後ろの友達が画面外扱いになっていません',
     );
     assert.equal(formatFriendDistance(999.4), '999 m');
     assert.equal(formatFriendDistance(1_260), '1.3 km');
     assert.equal(formatFriendDistance(12_600), '13 km');
+    assert.equal(formatFriendDistance(999.4, true), '999m');
+    assert.equal(formatFriendDistance(1_260, true), '1.3km');
+    assert.equal(formatVerticalDifference(11.9), '');
+    assert.equal(formatVerticalDifference(80.2), '↑ 80 m');
+    assert.equal(formatVerticalDifference(-31.7), '↓ 32 m');
+    assert.equal(formatVerticalDifference(80.2, true), '↑80m');
+    assert.equal(formatVerticalDifference(-31.7, true), '↓32m');
+
+    friendCamera.lookAt(1, 0, 0);
+    friendCamera.updateMatrixWorld();
+    const [turnedAway] = friendIndicators(
+      friendCamera,
+      { x: 0, y: 0, z: 0 },
+      [{ id: 'front', name: '前', x: 0, y: 0, z: -20 }],
+    );
+    assert.equal(
+      turnedAway.mode,
+      'offscreen',
+      'カメラを向け直したフレームに画面外表示へ変わりません',
+    );
+
+    friendCamera.lookAt(0, 0, -1);
+    friendCamera.updateMatrixWorld();
+    const [destination] = friendIndicators(friendCamera, { x: 0, y: 0, z: 0 }, [
+      {
+        id: 'destination',
+        name: '光の輪',
+        x: 0,
+        y: 80,
+        z: -12_000,
+        kind: 'destination',
+      },
+    ]);
+    assert.equal(destination.kind, 'destination', '光の輪の表示種別が失われています');
+    assert.equal(formatFriendDistance(destination.distance), '12 km');
   }
 
   {

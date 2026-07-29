@@ -5,12 +5,16 @@ import { Footsteps } from './audio/footsteps';
 import { Connection, type NetStatus, type PlayerState } from './net/connection';
 import { Player, type PlayerSnapshot } from './player/controller';
 import { Avatars } from './render/avatars';
+import { DestinationRing } from './render/destinationRing';
 import { MORNING, Sky } from './render/sky';
 import { Water } from './render/water';
 import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
-import { friendEdgeIndicators } from './ui/friendCompass';
+import {
+  friendIndicators,
+  type FriendPosition,
+} from './ui/friendCompass';
 import { normalizeSeed, randomSeed } from '../shared/seed';
 import { hashSeed } from './core/rng';
 import {
@@ -20,6 +24,7 @@ import {
   type TouchControls,
 } from './ui/touch';
 import { findSpawn } from './world/spawn';
+import { findDestination } from './world/destination';
 
 const LOOK_SENSITIVITY = 0.0022;
 const POSITION_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -54,9 +59,12 @@ function main(): void {
   // 着いたつもりで誰もいない場所を歩くことになる。必ず伝える。
   const badSeed = requested.length > 0 && fromHash === null;
 
+  const previewParams = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+  const forcePreviewTouch = previewParams?.get('touch') === '1';
   const preferredTouch = isTouchDevice();
   const touchCapable = hasTouchInput();
-  let inputMode: 'touch' | 'keys' = preferredTouch ? 'touch' : 'keys';
+  let inputMode: 'touch' | 'keys' =
+    preferredTouch || forcePreviewTouch ? 'touch' : 'keys';
   // 判定はここ 1 か所だけ。CSS もこの結果を見る。
   // 以前は CSS・overlay・touch がそれぞれ独立に判定していて、
   // 端末によって「指の説明が出るのに操作ボタンが無い」状態が起きた。
@@ -104,10 +112,53 @@ function main(): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   player.update(0, camera, reducedMotion);
 
+  const destination = findDestination(terrain, seed, spawn);
+  const destinationRing = new DestinationRing(scene, destination, spawn);
+  const previewMode = previewParams?.get('preview') ?? null;
+  const previewFriends = previewMode === 'friends';
+  const previewGoal = previewMode === 'goal';
+  if (previewGoal) {
+    const dx = destination.x - spawn.x;
+    const dz = destination.z - spawn.z;
+    const inverseDistance = 1 / Math.hypot(dx, dz);
+    const directionX = dx * inverseDistance;
+    const directionZ = dz * inverseDistance;
+    player.position.set(
+      destination.x - directionX * 220,
+      destination.y,
+      destination.z - directionZ * 220,
+    );
+    player.yaw = Math.atan2(-directionX, -directionZ);
+    player.toggleFlying();
+    player.update(0, camera, reducedMotion);
+  }
+
   const positionKey = `stroll:position:${seed}`;
   const savedPosition = loadPosition(positionKey);
 
   const avatars = new Avatars(scene);
+  const previewFriendCount = previewFriends ? 3 : 0;
+  if (previewFriends) {
+    // 本番には焼き込まれない、方向UIと鳥を同時に見るための開発用の3人。
+    const forwardX = -Math.sin(player.yaw);
+    const forwardZ = -Math.cos(player.yaw);
+    const rightX = Math.cos(player.yaw);
+    const rightZ = -Math.sin(player.yaw);
+    const examples = [
+      { id: 'preview-kai', name: 'かい', forward: 34, right: 10, up: 7, flying: true },
+      { id: 'preview-mio', name: 'みお', forward: -520, right: 760, up: 80, flying: true },
+      { id: 'preview-sora', name: 'そら', forward: 980, right: -640, up: 145, flying: true },
+    ];
+    for (const friend of examples) {
+      avatars.add(friend.id, friend.name, {
+        x: player.position.x + forwardX * friend.forward + rightX * friend.right,
+        y: player.position.y + friend.up,
+        z: player.position.z + forwardZ * friend.forward + rightZ * friend.right,
+        yaw: player.yaw,
+        flying: friend.flying,
+      });
+    }
+  }
   let connection: Connection | null = null;
   let netMessage: string | null = null;
 
@@ -142,7 +193,6 @@ function main(): void {
   let lastAutoFlight = false;
   let saveElapsed = 0;
   let audioUnavailable = false;
-  let friendUiElapsed = 0;
 
   /** 初回の挨拶にも毎回の送信にも同じものを使う。片方だけ変わると位置がずれる。 */
   const playerState = (): PlayerState => ({
@@ -292,7 +342,7 @@ function main(): void {
     void requestMouseLock();
   }
 
-  if (touchCapable) {
+  if (touchCapable || forcePreviewTouch) {
     touchControls = createTouchControls({
       root: document.getElementById('ui')!,
       surface: canvas,
@@ -302,6 +352,14 @@ function main(): void {
       onPause: stopPlaying,
       onTouchInput: () => setInputMode('touch'),
     });
+  }
+
+  if (previewFriends || previewGoal) {
+    // 自動テスト用ブラウザは Pointer Lock を持たないため、このURLだけは入口を省く。
+    // DEV の分岐ごと本番ビルドから消え、通常の開始処理には影響しない。
+    entryChosen = true;
+    overlay.setEntered();
+    startPlaying();
   }
 
   let resizeQueued = false;
@@ -456,6 +514,30 @@ function main(): void {
     player.onLook(e.movementX, e.movementY, LOOK_SENSITIVITY);
   });
 
+  if (previewMode && !forcePreviewTouch) {
+    // 確認用ブラウザは Pointer Lock を持たないことがある。
+    // プレビューに限り、ドラッグでも視点を動かして方向UIを体験できるようにする。
+    let lookPointer: number | null = null;
+    canvas.addEventListener('pointerdown', (event) => {
+      if (document.pointerLockElement === canvas) return;
+      lookPointer = event.pointerId;
+      canvas.setPointerCapture(event.pointerId);
+    });
+    canvas.addEventListener('pointermove', (event) => {
+      if (lookPointer !== event.pointerId || document.pointerLockElement === canvas) return;
+      player.onLook(event.movementX, event.movementY, LOOK_SENSITIVITY);
+    });
+    const finishPreviewLook = (event: PointerEvent) => {
+      if (lookPointer !== event.pointerId) return;
+      lookPointer = null;
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+    };
+    canvas.addEventListener('pointerup', finishPreviewLook);
+    canvas.addEventListener('pointercancel', finishPreviewLook);
+  }
+
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement === canvas) {
       setInputMode('keys');
@@ -529,25 +611,31 @@ function main(): void {
     if (connection) {
       // 動いていなければ、この呼び出しは何も送らない。
       connection.update(performance.now(), playerState());
-      overlay.setPeers(connection.peerCount, netMessage);
     }
-    avatars.update(dt, camera);
-    friendUiElapsed += dt;
-    if (friendUiElapsed >= 0.15) {
-      friendUiElapsed = 0;
-      overlay.setFriendDirections(
-        playing
-          ? friendEdgeIndicators(
-              player.position.x,
-              player.position.y,
-              player.position.z,
-              player.yaw,
-              player.pitch,
-              avatars.friendPositions(),
-            )
-          : [],
+    if (connection || previewFriends) {
+      overlay.setPeers(
+        (connection?.peerCount ?? 0) + previewFriendCount,
+        previewFriends ? null : netMessage,
       );
     }
+    avatars.update(dt, camera);
+    if (destinationRing.update(elapsed, player.position)) {
+      overlay.flash('いいフライトでした。次の目的地は？');
+    }
+    const edgeTargets: FriendPosition[] = avatars.friendPositions();
+    edgeTargets.push({
+      id: 'destination-light-ring',
+      name: '光の輪',
+      x: destination.x,
+      y: destination.y,
+      z: destination.z,
+      kind: 'destination',
+    });
+    overlay.setFriendDirections(
+      playing
+        ? friendIndicators(camera, player.position, edgeTargets)
+        : [],
+    );
 
     const shouldRender = playing || elapsed - lastIdleRender >= 1 / 20;
     if (shouldRender) {

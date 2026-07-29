@@ -12,6 +12,8 @@ export const RENDER_ORDER = {
   sky: -1000,
   /** 海と湖。地形より後。 */
   water: 10,
+  /** 遠方の光の輪。水面より後だが、地形の深度には隠れる。 */
+  destination: 15,
   /** 名前の板。水の上に出さないと、水辺で読めなくなる。 */
   label: 20,
 } as const;

@@ -586,9 +586,11 @@ kbd {
 
 .friend-edge-marker {
   position: absolute;
-  max-width: 190px;
+  left: 0;
+  top: 0;
+  max-width: 230px;
   display: grid;
-  grid-template-columns: 22px minmax(24px, auto) auto;
+  grid-template-columns: 22px minmax(24px, auto) auto auto;
   align-items: center;
   gap: 6px;
   padding: 4px 8px 4px 5px;
@@ -599,8 +601,7 @@ kbd {
   box-shadow: 0 3px 15px rgba(4, 10, 14, 0.16);
   backdrop-filter: blur(6px);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  transform: translate(-50%, -50%);
-  transition: left 170ms linear, top 170ms linear;
+  will-change: transform;
 }
 
 .friend-arrow {
@@ -632,6 +633,113 @@ kbd {
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
   color: rgba(255, 255, 255, 0.58);
+}
+
+.friend-altitude {
+  white-space: nowrap;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(220, 238, 248, 0.86);
+}
+
+.friend-altitude:empty {
+  display: none;
+}
+
+.onscreen-friend-marker {
+  padding: 3px 7px 3px 4px;
+  background: rgba(12, 20, 26, 0.38);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 10px rgba(4, 10, 14, 0.13);
+  backdrop-filter: blur(4px);
+}
+
+.onscreen-friend-marker:not(.destination-edge-marker) {
+  grid-template-columns: minmax(24px, auto) auto auto;
+}
+
+.onscreen-friend-marker .friend-arrow {
+  font-size: 17px;
+  background: transparent;
+}
+
+.onscreen-friend-marker .friend-arrow:empty {
+  display: none;
+}
+
+.destination-edge-marker {
+  color: #ffffff;
+  background: rgba(226, 241, 248, 0.17);
+  border-color: rgba(244, 251, 255, 0.56);
+  box-shadow:
+    0 0 18px rgba(225, 244, 255, 0.28),
+    0 3px 15px rgba(4, 10, 14, 0.18);
+}
+
+.destination-edge-marker .friend-arrow {
+  font-size: 17px;
+  color: #ffffff;
+  background: rgba(235, 248, 255, 0.19);
+  box-shadow: 0 0 9px rgba(235, 248, 255, 0.35);
+}
+
+.destination-edge-marker .friend-distance {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.destination-edge-marker .friend-altitude {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* 縦画面では4人分だけでもカード感が強い。情報は残し、密度と濃さだけを下げる。 */
+:root[data-input='touch'] .friend-edge-marker {
+  max-width: 178px;
+  grid-template-columns: 18px minmax(20px, auto) auto auto;
+  gap: 3px;
+  padding: 3px 6px 3px 4px;
+  background: rgba(12, 20, 26, 0.39);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 9px rgba(4, 10, 14, 0.13);
+  backdrop-filter: blur(3px);
+}
+
+:root[data-input='touch'] .friend-arrow {
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+}
+
+:root[data-input='touch'] .friend-name {
+  max-width: 62px;
+  font-size: 10px;
+}
+
+:root[data-input='touch'] .friend-distance,
+:root[data-input='touch'] .friend-altitude {
+  font-size: 8.5px;
+}
+
+:root[data-input='touch'] .onscreen-friend-marker {
+  padding: 2px 5px 2px 3px;
+  background: rgba(12, 20, 26, 0.31);
+}
+
+:root[data-input='touch']
+  .onscreen-friend-marker:not(.destination-edge-marker) {
+  grid-template-columns: minmax(20px, auto) auto auto;
+}
+
+:root[data-input='touch'] .destination-edge-marker {
+  background: rgba(226, 241, 248, 0.12);
+  border-color: rgba(244, 251, 255, 0.42);
+  box-shadow:
+    0 0 10px rgba(225, 244, 255, 0.18),
+    0 2px 8px rgba(4, 10, 14, 0.13);
+}
+
+:root[data-input='touch'] .destination-edge-marker .friend-arrow {
+  font-size: 14px;
+  box-shadow: 0 0 6px rgba(235, 248, 255, 0.25);
 }
 
 .keyboard-guide {
