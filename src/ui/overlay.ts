@@ -239,7 +239,13 @@ export class Overlay {
   setFriendDirections(friends: readonly FriendIndicator[]): void {
     // 1部屋は自分以外の最大9人。光の輪を加えた10個まで全員出せる。
     const limit = 10;
-    const visible = friends.filter((friend) => friend.mode !== 'near').slice(0, limit);
+    // 光の輪は「向いた先にあるか」を確かめるための目印なので、視界に入っている
+    // ときだけ出す。友達と違って居場所を追う相手ではなく、背を向けている間も
+    // 画面端で呼ばれ続けると、行き先を指示されているように感じる。
+    const visible = friends
+      .filter((friend) => friend.mode !== 'near')
+      .filter((friend) => friend.kind !== 'destination' || friend.mode === 'onscreen')
+      .slice(0, limit);
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const leftBound = Math.min(centerX, this.touch ? 80 : 96);
@@ -427,8 +433,8 @@ export class Overlay {
       this.friendMarkers.delete(id);
     }
 
-    this.friendCompass.classList.toggle('on', friends.length > 0);
-    this.friendCompass.ariaHidden = friends.length > 0 ? 'false' : 'true';
+    this.friendCompass.classList.toggle('on', visible.length > 0);
+    this.friendCompass.ariaHidden = visible.length > 0 ? 'false' : 'true';
   }
 
   /** PC で最初に世界へ入ったときだけ、操作を15秒見せる。 */
