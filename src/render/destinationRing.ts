@@ -50,19 +50,35 @@ export class DestinationRing {
     core.renderOrder = RENDER_ORDER.destination;
     glow.renderOrder = RENDER_ORDER.destination;
     this.group.add(glow, core);
+    scene.add(this.group);
+    this.setDestination(destination, origin);
+  }
 
+  /** 次の渡り先へ輪を移し、到達判定も新しい区間として始め直す。 */
+  setDestination(
+    destination: Destination,
+    origin: { x: number; z: number },
+  ): void {
     this.group.position.set(destination.x, destination.y, destination.z);
-    // 開始地点から輪の面へまっすぐ入れる向きにする。
+    // 区間の出発地点から輪の面へまっすぐ入れる向きにする。
     const dx = destination.x - origin.x;
     const dz = destination.z - origin.z;
     this.group.rotation.y = Math.atan2(dx, dz);
-    scene.add(this.group);
+    this.group.visible = true;
+    this.arrived = false;
+  }
+
+  /** 到達後は、次の光を選ぶまで世界から輪そのものを消す。 */
+  hide(): void {
+    this.group.visible = false;
   }
 
   /**
    * 輪をわずかに呼吸させる。初めて輪の内側へ入ったフレームだけ true。
    */
   update(elapsed: number, position: THREE.Vector3): boolean {
+    if (!this.group.visible) return false;
+
     const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.1);
     const scale = 1 + pulse * 0.025;
     this.group.scale.setScalar(scale);

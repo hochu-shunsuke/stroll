@@ -112,22 +112,31 @@ function main(): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   player.update(0, camera, reducedMotion);
 
-  const destination = findDestination(terrain, seed, spawn);
+  let destinationLeg = 0;
+  let destinationOrigin = { x: spawn.x, z: spawn.z };
+  let destination = findDestination(terrain, seed, destinationOrigin);
+  let destinationActive = true;
   const destinationRing = new DestinationRing(scene, destination, spawn);
   const previewMode = previewParams?.get('preview') ?? null;
   const previewFriends = previewMode === 'friends';
   const previewGoal = previewMode === 'goal';
-  if (previewGoal) {
+  const previewDestination = previewMode === 'destination';
+  const previewArrival = previewMode === 'arrival';
+  if (previewGoal || previewDestination || previewArrival) {
     const dx = destination.x - spawn.x;
     const dz = destination.z - spawn.z;
     const inverseDistance = 1 / Math.hypot(dx, dz);
     const directionX = dx * inverseDistance;
     const directionZ = dz * inverseDistance;
-    player.position.set(
-      destination.x - directionX * 220,
-      destination.y,
-      destination.z - directionZ * 220,
-    );
+    if (previewGoal) {
+      player.position.set(
+        destination.x - directionX * 220,
+        destination.y,
+        destination.z - directionZ * 220,
+      );
+    } else if (previewArrival) {
+      player.position.set(destination.x, destination.y, destination.z);
+    }
     player.yaw = Math.atan2(-directionX, -directionZ);
     player.toggleFlying();
     player.update(0, camera, reducedMotion);
@@ -193,6 +202,7 @@ function main(): void {
   let lastAutoFlight = false;
   let saveElapsed = 0;
   let audioUnavailable = false;
+  let directionHintShown = false;
 
   /** 初回の挨拶にも毎回の送信にも同じものを使う。片方だけ変わると位置がずれる。 */
   const playerState = (): PlayerState => ({
@@ -219,8 +229,25 @@ function main(): void {
         location.hash = next;
         location.reload();
       },
+      onNextDestination: () => startNextDestination(),
     },
   );
+
+  function startNextDestination(): void {
+    const previousOrigin = destinationOrigin;
+    destinationOrigin = { x: destination.x, z: destination.z };
+    destinationLeg += 1;
+    destination = findDestination(
+      terrain,
+      seed,
+      destinationOrigin,
+      destinationLeg,
+      previousOrigin,
+    );
+    destinationRing.setDestination(destination, destinationOrigin);
+    destinationActive = true;
+    overlay.flash('次の光が、24 km先に現れました。', 4_200);
+  }
 
   const setInputMode = (next: 'touch' | 'keys') => {
     if (inputMode === next) return;
@@ -283,6 +310,10 @@ function main(): void {
     playing = true;
     overlay.hide();
     overlay.showKeyboardGuide();
+    if (!directionHintShown) {
+      directionHintShown = true;
+      overlay.flash('矢印が示す方向に向かう。', 4_200);
+    }
     touchControls?.setActive(inputMode === 'touch');
     if (player.autoFlight) void requestWakeLock();
   }
@@ -354,7 +385,7 @@ function main(): void {
     });
   }
 
-  if (previewFriends || previewGoal) {
+  if (previewFriends || previewGoal || previewDestination || previewArrival) {
     // 自動テスト用ブラウザは Pointer Lock を持たないため、このURLだけは入口を省く。
     // DEV の分岐ごと本番ビルドから消え、通常の開始処理には影響しない。
     entryChosen = true;
@@ -498,6 +529,10 @@ function main(): void {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'Space') e.preventDefault();
     if (!playing) return;
+    if (e.code === 'KeyN' && overlay.chooseNextDestination()) {
+      e.preventDefault();
+      return;
+    }
     if (e.code === 'KeyM' && !e.repeat) {
       const muted = audio?.toggleMute() ?? false;
       overlay.flash(muted ? '音を切りました' : '音を戻しました');
@@ -619,18 +654,25 @@ function main(): void {
       );
     }
     avatars.update(dt, camera);
-    if (destinationRing.update(elapsed, player.position)) {
-      overlay.flash('いいフライトでした。次の目的地は？');
+    if (
+      destinationActive &&
+      destinationRing.update(elapsed, player.position)
+    ) {
+      destinationActive = false;
+      destinationRing.hide();
+      overlay.showJourneyChoice();
     }
     const edgeTargets: FriendPosition[] = avatars.friendPositions();
-    edgeTargets.push({
-      id: 'destination-light-ring',
-      name: '光の輪',
-      x: destination.x,
-      y: destination.y,
-      z: destination.z,
-      kind: 'destination',
-    });
+    if (destinationActive) {
+      edgeTargets.push({
+        id: 'destination-light-ring',
+        name: '光の輪',
+        x: destination.x,
+        y: destination.y,
+        z: destination.z,
+        kind: 'destination',
+      });
+    }
     overlay.setFriendDirections(
       playing
         ? friendIndicators(camera, player.position, edgeTargets)

@@ -41,7 +41,7 @@ function run(player, camera, seconds, step = 1 / 60) {
 try {
   const [
     { Player, EYE_HEIGHT, FLY_CRUISE_SPEED, FLY_BOOST_SPEED },
-    { resolveEntryPointerType },
+    { nextDestinationCueDirection, resolveEntryPointerType },
     { friendIndicators, formatFriendDistance, formatVerticalDifference },
   ] = await Promise.all([
     server.ssrLoadModule('/src/player/controller.ts'),
@@ -69,6 +69,15 @@ try {
     'keyboard',
     '直前にタッチしていてもキーボード操作をタッチへ誤分類しています',
   );
+  assert.equal(nextDestinationCueDirection('forward', 0.12), 'forward');
+  assert.equal(nextDestinationCueDirection('forward', 0.31), 'right');
+  assert.equal(
+    nextDestinationCueDirection('right', 0.02),
+    'right',
+    '小さな視点移動で目的地矢印が中央へちらつきます',
+  );
+  assert.equal(nextDestinationCueDirection('right', -0.12), 'forward');
+  assert.equal(nextDestinationCueDirection('forward', -0.31), 'left');
 
   {
     const friendCamera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 9_000);
@@ -143,12 +152,12 @@ try {
         name: '光の輪',
         x: 0,
         y: 80,
-        z: -12_000,
+        z: -24_000,
         kind: 'destination',
       },
     ]);
     assert.equal(destination.kind, 'destination', '光の輪の表示種別が失われています');
-    assert.equal(formatFriendDistance(destination.distance), '12 km');
+    assert.equal(formatFriendDistance(destination.distance), '24 km');
   }
 
   {

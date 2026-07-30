@@ -742,6 +742,66 @@ kbd {
   box-shadow: 0 0 6px rgba(235, 248, 255, 0.25);
 }
 
+.journey-choice {
+  position: absolute;
+  left: 50%;
+  bottom: max(42px, calc(env(safe-area-inset-bottom) + 24px));
+  width: min(92vw, 330px);
+  padding: 12px;
+  border-radius: 18px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(12, 20, 26, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 26px rgba(4, 10, 14, 0.22);
+  backdrop-filter: blur(7px);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 8px);
+  transition: opacity 300ms ease, transform 300ms ease, visibility 300ms;
+  pointer-events: auto;
+}
+
+.journey-choice.on {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
+.journey-choice p {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.journey-actions {
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+}
+
+.journey-actions button {
+  padding: 7px 12px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.journey-actions .journey-next {
+  color: #ffffff;
+  background: rgba(225, 244, 255, 0.15);
+  border-color: rgba(225, 244, 255, 0.3);
+}
+
+:root[data-input='touch'] .journey-choice {
+  top: max(76px, calc(env(safe-area-inset-top) + 64px));
+  bottom: auto;
+  width: min(82vw, 310px);
+}
+
+:root[data-input='touch'] .journey-next kbd {
+  display: none;
+}
+
 .keyboard-guide {
   position: absolute;
   left: 50%;
@@ -796,6 +856,8 @@ kbd {
   padding: 9px 16px;
   border-radius: 999px;
   font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-line;
   background: rgba(12, 20, 26, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.12);
   opacity: 0;
@@ -807,8 +869,16 @@ kbd {
   transform: translate(-50%, 0);
 }
 
-.keyboard-guide.on + .toast {
+.keyboard-guide.on ~ .toast {
   bottom: 106px;
+}
+
+:root[data-input='touch'] .toast {
+  top: max(76px, calc(env(safe-area-inset-top) + 64px));
+  bottom: auto;
+  max-width: min(76vw, 300px);
+  padding: 8px 13px;
+  font-size: 11px;
 }
 
 @media (max-width: 680px) {
@@ -825,6 +895,7 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .friend-compass,
   .friend-edge-marker,
+  .journey-choice,
   .keyboard-guide,
   .toast {
     transition: none;
