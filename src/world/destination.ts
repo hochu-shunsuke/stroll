@@ -1,7 +1,7 @@
 import { hashSeed } from '../core/rng';
 import type { Terrain } from './terrain';
 
-export const DESTINATION_DISTANCE = 24_000;
+export const DESTINATION_DISTANCE = 12_000;
 export const DESTINATION_RING_RADIUS = 48;
 export const DESTINATION_CLEARANCE = 62;
 
@@ -22,34 +22,16 @@ export interface Destination {
 export function findDestination(
   terrain: Terrain,
   seed: string,
-  origin: { x: number; z: number },
-  leg = 0,
-  previousOrigin?: { x: number; z: number },
+  spawn: { x: number; z: number },
 ): Destination {
-  // 最初の光は従来と同じ方角の並びを保つ。2つ目以降だけ区間番号を混ぜ、
-  // 同じ世界なら誰が進めても同じ渡りの道になる。
-  const routeSeed = leg === 0 ? `${seed}:light-ring` : `${seed}:light-ring:${leg}`;
   const offset =
-    (hashSeed(routeSeed)[0] / 4_294_967_296) * Math.PI * 2;
+    (hashSeed(`${seed}:light-ring`)[0] / 4_294_967_296) * Math.PI * 2;
   let best: { x: number; z: number; groundY: number; score: number } | null = null;
-  const previousDx = previousOrigin ? origin.x - previousOrigin.x : 0;
-  const previousDz = previousOrigin ? origin.z - previousOrigin.z : 0;
-  const previousLength = Math.hypot(previousDx, previousDz);
 
   for (let i = 0; i < 32; i++) {
     const angle = offset + (i / 32) * Math.PI * 2;
-    const directionX = Math.sin(angle);
-    const directionZ = Math.cos(angle);
-    const onward =
-      previousLength > 0
-        ? (directionX * previousDx + directionZ * previousDz) / previousLength
-        : 0;
-    // 2区間目以降は前方半円からだけ選ぶ。地形の点数差で来た道を
-    // そのまま戻ることがない、渡りとして一貫したルートにする。
-    if (previousLength > 0 && onward < 0) continue;
-
-    const x = origin.x + directionX * DESTINATION_DISTANCE;
-    const z = origin.z + directionZ * DESTINATION_DISTANCE;
+    const x = spawn.x + Math.sin(angle) * DESTINATION_DISTANCE;
+    const z = spawn.z + Math.cos(angle) * DESTINATION_DISTANCE;
     const groundY = terrain.heightAt(x, z);
     const water = Number.isFinite(terrain.waterLevelAt(x, z));
 
@@ -64,14 +46,11 @@ export function findDestination(
       4;
     const broadHeight = Math.min(190, Math.max(0, (groundY + surrounding) / 2));
     const landScore = !water && groundY > 4 ? 1_000 : 0;
-    // 次の区間が来た道をそのまま引き返すと「渡り」ではなく往復に見える。
-    // 地形の良さを優先しつつ、同程度の候補なら今までの進行方向へ続ける。
     const score =
       landScore +
       broadHeight * 2 -
       Math.max(0, groundY - 240) * 3 -
-      Math.max(0, groundY - surrounding) * 0.25 +
-      onward * 120;
+      Math.max(0, groundY - surrounding) * 0.25;
 
     if (!best || score > best.score) best = { x, z, groundY, score };
   }

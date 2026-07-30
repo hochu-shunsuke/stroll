@@ -9,8 +9,6 @@ export interface OverlayHandlers {
   onStart: (resume: boolean, pointerType: string) => void;
   /** 合言葉が変わったとき。世界ごと作り直すので読み込み直す。 */
   onSeed: (seed: string) => void;
-  /** 到達後、本人が渡りを続けると選んだときだけ次の光を作る。 */
-  onNextDestination: () => void;
 }
 
 const NAME_KEY = 'stroll:name';
@@ -22,29 +20,6 @@ interface FriendMarkerElements {
   name: HTMLElement;
   distance: HTMLElement;
   altitude: HTMLElement;
-}
-
-export type DestinationCueDirection = 'left' | 'forward' | 'right';
-
-/**
- * 目的地方向の3段階表示。戻り側の閾値を狭くして、
- * 境界付近で左右へちらつかないヒステリシスを作る。
- */
-export function nextDestinationCueDirection(
-  current: DestinationCueDirection,
-  projectedX: number,
-): DestinationCueDirection {
-  if (current === 'forward') {
-    if (projectedX < -0.28) return 'left';
-    if (projectedX > 0.28) return 'right';
-    return current;
-  }
-  if (current === 'left') {
-    if (projectedX > 0.08) return projectedX > 0.28 ? 'right' : 'forward';
-    return current;
-  }
-  if (projectedX < -0.08) return projectedX < -0.28 ? 'left' : 'forward';
-  return current;
 }
 
 /**
@@ -62,11 +37,9 @@ export class Overlay {
   private friendCompass: HTMLElement;
   private keyboardGuide: HTMLElement;
   private toast: HTMLElement;
-  private journeyChoice: HTMLElement;
   private seed: string;
   private handlers: OverlayHandlers;
   private toastTimer = 0;
-  private journeyChoiceTimer = 0;
 
   /** 他の人の画面に出る表示名。 */
   name: string;
@@ -74,9 +47,6 @@ export class Overlay {
   private peers: HTMLElement;
   private peersText = '';
   private flightText = '';
-  private destinationText = '';
-  private topHudText = '';
-  private destinationDirection: DestinationCueDirection = 'forward';
   private friendMarkers = new Map<string, FriendMarkerElements>();
   private keyboardGuideTimer = 0;
   private keyboardGuideShown = false;
@@ -166,13 +136,6 @@ export class Overlay {
         <span><kbd>R</kbd> AUTO</span>
         <span><kbd>Esc</kbd> 休憩</span>
       </div>
-      <div class="journey-choice" aria-live="polite" aria-hidden="true">
-        <p>いいフライトでした。</p>
-        <div class="journey-actions">
-          <button class="journey-next"><kbd>N</kbd> 次の光を探す</button>
-          <button class="journey-rest">ここで休む</button>
-        </div>
-      </div>
       <div class="toast"></div>
     `;
 
@@ -184,7 +147,6 @@ export class Overlay {
     this.flightHud = this.root.querySelector('.flight-hud')!;
     this.friendCompass = this.root.querySelector('.friend-compass')!;
     this.keyboardGuide = this.root.querySelector('.keyboard-guide')!;
-    this.journeyChoice = this.root.querySelector('.journey-choice')!;
     this.toast = this.root.querySelector('.toast')!;
 
     this.peers = this.root.querySelector('.hud-peers')!;
@@ -192,12 +154,6 @@ export class Overlay {
     this.bindEntryButton(this.startBtn, () => this.resumable);
     this.bindEntryButton(this.freshBtn, () => false);
     this.root.querySelector('.share')!.addEventListener('click', () => this.copyUrl());
-    this.root.querySelector('.journey-next')!.addEventListener('click', () => {
-      this.chooseNextDestination();
-    });
-    this.root.querySelector('.journey-rest')!.addEventListener('click', () => {
-      this.hideJourneyChoice();
-    });
 
     const nameInput = this.root.querySelector('.name') as HTMLInputElement;
     nameInput.addEventListener('input', () => {
@@ -286,16 +242,10 @@ export class Overlay {
     // 光の輪は「向いた先にあるか」を確かめるための目印なので、視界に入っている
     // ときだけ出す。友達と違って居場所を追う相手ではなく、背を向けている間も
     // 画面端で呼ばれ続けると、行き先を指示されているように感じる。
-    const candidates = friends
+    const visible = friends
       .filter((friend) => friend.mode !== 'near')
       .filter((friend) => friend.kind !== 'destination' || friend.mode === 'onscreen')
       .slice(0, limit);
-    const distantDestination = candidates.find(
-      (friend) => friend.kind === 'destination' && friend.distance > 8_000,
-    );
-    this.setDestinationCue(distantDestination);
-    // 遠い目的地は速度・高度と同じHUDへ統合する。友達用マーカーは作らない。
-    const visible = candidates.filter((friend) => friend !== distantDestination);
     const centerX = innerWidth / 2;
     const centerY = innerHeight / 2;
     const leftBound = Math.min(centerX, this.touch ? 80 : 96);
@@ -467,7 +417,7 @@ export class Overlay {
       const arrowText = destination ? '○' : onscreen ? '' : '↑';
       if (marker.arrow.textContent !== arrowText) marker.arrow.textContent = arrowText;
       marker.arrow.style.transform =
-        !destination && !onscreen ? `rotate(${friend.rotation}rad)` : 'none';
+        destination || onscreen ? 'none' : `rotate(${friend.rotation}rad)`;
       if (marker.name.textContent !== friend.name) marker.name.textContent = friend.name;
       if (marker.distance.textContent !== distanceText) {
         marker.distance.textContent = distanceText;
@@ -485,64 +435,6 @@ export class Overlay {
 
     this.friendCompass.classList.toggle('on', visible.length > 0);
     this.friendCompass.ariaHidden = visible.length > 0 ? 'false' : 'true';
-  }
-
-  /**
-   * 遠い目的地は速度・高度と同じ1本のHUDへ入れる。
-   * 左右の閾値にヒステリシスを持たせ、境界付近の小さな視点移動で
-   * ↖ / ↑ / ↗ がちらつかないようにする。
-   */
-  private setDestinationCue(destination?: FriendIndicator): void {
-    let text = '';
-    if (destination) {
-      this.destinationDirection = nextDestinationCueDirection(
-        this.destinationDirection,
-        destination.directionX,
-      );
-      const arrow =
-        this.destinationDirection === 'left'
-          ? '↖'
-          : this.destinationDirection === 'right'
-            ? '↗'
-            : '↑';
-      text = `${arrow} ${formatFriendDistance(destination.distance, this.touch)}`;
-    } else {
-      this.destinationDirection = 'forward';
-    }
-    if (text === this.destinationText) return;
-    this.destinationText = text;
-    this.renderTopHud();
-  }
-
-  /**
-   * 到達は次の目標を強制しない。短い間だけ選択肢を置き、
-   * 何もしなければナビの無い静かな世界へ戻す。
-   */
-  showJourneyChoice(): void {
-    // 到達メッセージを、その前の操作ガイドや一時通知へ重ねない。
-    this.keyboardGuide.classList.remove('on');
-    this.keyboardGuide.ariaHidden = 'true';
-    this.toast.classList.remove('on');
-    this.journeyChoice.classList.add('on');
-    this.journeyChoice.ariaHidden = 'false';
-    clearTimeout(this.journeyChoiceTimer);
-    this.journeyChoiceTimer = window.setTimeout(() => {
-      this.hideJourneyChoice();
-    }, 12_000);
-  }
-
-  hideJourneyChoice(): void {
-    clearTimeout(this.journeyChoiceTimer);
-    this.journeyChoice.classList.remove('on');
-    this.journeyChoice.ariaHidden = 'true';
-  }
-
-  /** キーボードの N と画面上のボタンが同じ経路を通る。 */
-  chooseNextDestination(): boolean {
-    if (!this.journeyChoice.classList.contains('on')) return false;
-    this.hideJourneyChoice();
-    this.handlers.onNextDestination();
-    return true;
   }
 
   /** PC で最初に世界へ入ったときだけ、操作を15秒見せる。 */
@@ -599,22 +491,16 @@ export class Overlay {
     if (!flying) {
       if (this.flightText === '') return;
       this.flightText = '';
-      this.renderTopHud();
+      this.flightHud.textContent = '';
+      this.flightHud.classList.remove('on');
       return;
     }
     const label = auto ? 'AUTO · ' : '';
     const text = `${label}${Math.round(speed * 3.6)} km/h · 高度 ${Math.round(altitude)} m`;
     if (text === this.flightText) return;
     this.flightText = text;
-    this.renderTopHud();
-  }
-
-  private renderTopHud(): void {
-    const text = [this.flightText, this.destinationText].filter(Boolean).join(' · ');
-    if (text === this.topHudText) return;
-    this.topHudText = text;
     this.flightHud.textContent = text;
-    this.flightHud.classList.toggle('on', text.length > 0);
+    this.flightHud.classList.add('on');
   }
 
   setActionLabel(label: string): void {
@@ -651,11 +537,11 @@ export class Overlay {
     }
   }
 
-  flash(text: string, duration = 2_600): void {
+  flash(text: string): void {
     this.toast.textContent = text;
     this.toast.classList.add('on');
     clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('on'), duration);
+    this.toastTimer = window.setTimeout(() => this.toast.classList.remove('on'), 2600);
   }
 }
 

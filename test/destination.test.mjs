@@ -32,30 +32,15 @@ try {
     assert(
       Math.abs(Math.hypot(first.x - spawn.x, first.z - spawn.z) - DESTINATION_DISTANCE) <
         1e-6,
-      `${seed}: 光の輪が24km先にありません`,
+      `${seed}: 光の輪が12km先にありません`,
     );
     assert(
       first.y - first.groundY >= DESTINATION_CLEARANCE - 1e-6,
       `${seed}: 光の輪が地形に近すぎます`,
     );
-
-    const next = findDestination(terrain, seed, first, 1, spawn);
-    const repeatedNext = findDestination(terrain, seed, first, 1, spawn);
-    assert.deepEqual(next, repeatedNext, `${seed}: 次の光の位置が再現できません`);
-    assert(
-      Math.abs(Math.hypot(next.x - first.x, next.z - first.z) - DESTINATION_DISTANCE) <
-        1e-6,
-      `${seed}: 次の光が24km先にありません`,
-    );
-    const firstDirection = { x: first.x - spawn.x, z: first.z - spawn.z };
-    const nextDirection = { x: next.x - first.x, z: next.z - first.z };
-    assert(
-      firstDirection.x * nextDirection.x + firstDirection.z * nextDirection.z > 0,
-      `${seed}: 次の渡り先が来た道を引き返しています`,
-    );
   }
 
-  console.log('PASS  光の輪 同じ合言葉の約24km先・次の渡り先も再現可能');
+  console.log('PASS  光の輪 同じ合言葉の約12km先・地形から62m以上');
 } finally {
   await server.close();
 }
