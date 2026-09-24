@@ -60,6 +60,7 @@ export class Terrain {
   private readonly lakeSalt: number;
   private readonly nSpecialEdge: Noise2D;
   private readonly specialSalt: number;
+  private readonly nPatch: Noise2D;
 
   constructor(seed: string) {
     this.seed = seed;
@@ -71,6 +72,18 @@ export class Terrain {
     this.lakeSalt = (a ^ 0x5bd1e995) >>> 0;
     this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
     this.specialSalt = (b ^ 0x9e3779b1) >>> 0;
+    this.nPatch = new Noise2D((d ^ 0x61c88647) >>> 0);
+  }
+
+  /**
+   * 地面のむら -1..1。数十 m の波長で、草の色味と雪線・岩線の位置を揺らす。
+   * 色にしか使わないので標高・植生の配置には影響しない。
+   */
+  patchAt(x: number, z: number): number {
+    return (
+      this.nPatch.noise(x * 0.011, z * 0.011) * 0.65 +
+      this.nPatch.noise(x * 0.037 + 31.7, z * 0.037 - 17.3) * 0.35
+    );
   }
 
   /** 宝物区画の判定。詳しくは special.ts。 */
@@ -186,9 +199,10 @@ export class Terrain {
     temp: number,
     moisture: number,
     special: SpecialHit,
+    patch: number,
     out: Float32Array,
     o: number,
   ): void {
-    shadeTerrain(h, slope, temp, moisture, special, out, o);
+    shadeTerrain(h, slope, temp, moisture, special, patch, out, o);
   }
 }

@@ -108,6 +108,20 @@ function peaksValleys(w: number): number {
 const WARP_FREQ = 0.0007;
 const WARP_AMOUNT = 170;
 
+/**
+ * 地域の性格。数 km の波長で「尖った岩峰の地域」と「丸く連なる丘陵の地域」を分ける。
+ *
+ * 以前は起伏の細部と尖った尾根が世界中に一律で掛かっていて、どの山も同じ
+ * 岩峰になった。丘陵側では細部と峰を抑え、代わりに丸い高まりを置く。
+ * 高さの帯（UPLAND・RUGGED・MASSIF）はそのままなので、陸の標高分布は大きく動かない。
+ */
+const STYLE_FREQ = 0.00022;
+const ROLLING_DETAIL = 0.3;
+const ROLLING_RIDGE = 0.35;
+const ROLLING_SPIRE = 0.2;
+const DOME_FREQ = 0.0021;
+const DOME_HEIGHT = 30;
+
 const BASE_JITTER_FREQ = 0.0004;
 const BASE_JITTER_AMOUNT = 0.05;
 
@@ -140,6 +154,7 @@ export class TerrainShape {
   private readonly nBaseJitter: Noise2D;
   private readonly nRiver: Noise2D;
   private readonly nLandformEdge: Noise2D;
+  private readonly nStyle: Noise2D;
   private readonly landformSalt: number;
 
   constructor(a: number, b: number, c: number, d: number) {
@@ -152,6 +167,7 @@ export class TerrainShape {
     this.nRiver = new Noise2D((a ^ 0x27220a95) >>> 0);
     this.nLandformEdge = new Noise2D((c ^ 0x7feb352d) >>> 0);
     this.landformSalt = (d ^ 0x846ca68b) >>> 0;
+    this.nStyle = new Noise2D((b ^ 0x5851f42d) >>> 0);
   }
 
   private continentalnessAt(x: number, z: number): number {
@@ -220,14 +236,34 @@ export class TerrainShape {
     const rugged =
       smoothstep(RUGGED_CONT[0], RUGGED_CONT[1], contBroad) *
       smoothstep(RUGGED_ERO[0], RUGGED_ERO[1], eroBroad);
+    // 0 が岩峰の地域、1 が丘陵の地域。
+    const rolling = smoothstep(
+      -0.25,
+      0.25,
+      this.nStyle.noise(x * STYLE_FREQ, z * STYLE_FREQ),
+    );
     h += upland * UPLAND_RISE;
     h +=
       rugged *
       (RUGGED_SHOULDER +
-        smoothstep(RUGGED_PV[0], RUGGED_PV[1], pv) * RUGGED_RIDGE);
+        smoothstep(RUGGED_PV[0], RUGGED_PV[1], pv) *
+          RUGGED_RIDGE *
+          mix(1, ROLLING_RIDGE, rolling));
     if (massif > 0) {
       h += massif * PEAK_MASSIF;
-      h += massif * smoothstep(PEAK_PV[0], PEAK_PV[1], pv) * PEAK_SPIRE;
+      h +=
+        massif *
+        smoothstep(PEAK_PV[0], PEAK_PV[1], pv) *
+        PEAK_SPIRE *
+        mix(1, ROLLING_SPIRE, rolling);
+    }
+    // 丘陵の丸い高まり。高地の上にだけ乗せ、低地と海岸には触らない。
+    const hills = rolling * Math.max(upland, rugged);
+    if (hills > 0) {
+      const dome =
+        this.nStyle.noise(wx * DOME_FREQ + 71.3, wz * DOME_FREQ - 29.1) * 0.5 +
+        0.5;
+      h += hills * dome * dome * DOME_HEIGHT;
     }
 
     // 谷底では細部を抑え、歩く面を常にがたつかせない。
@@ -235,6 +271,7 @@ export class TerrainShape {
       fbmEroded(this.nDetail, wx, wz, 4, 0.0055) *
       relief *
       0.6 *
+      mix(1, ROLLING_DETAIL, rolling) *
       (1 - valley * 0.82);
 
     // 専用ノイズのゼロ線までの距離で、連結した涸れ谷を彫る。

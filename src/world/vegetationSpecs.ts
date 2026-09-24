@@ -72,13 +72,15 @@ const CLIMATE_SPECS: KindSpec[] = [
     blocksSpawn: true,
     tint: [0.98, 1.08, 0.9],
     place: (c) => {
-      if (c.h < 3.2 || c.h > 52) return 0;
+      // 標高の上限は気温の帯（高いほど冷える）に任せ、ここでは緩く取る。
+      // 52m で切っていた頃は、丘の中腹から上が全部はげて見えた。
+      if (c.h < 3.2 || c.h > 120) return 0;
       const climate =
         smoothstep(0.34, 0.68, c.moisture) * band(c.temp, 0.4, 0.62, 0.9);
       const density =
         climate *
         c.grove *
-        (1 - smoothstep(34, 52, c.h)) *
+        (1 - smoothstep(80, 120, c.h)) *
         0.7 *
         (1 - c.special.strength);
       if (c.r > density) return 0;
@@ -96,7 +98,7 @@ const CLIMATE_SPECS: KindSpec[] = [
     blocksSpawn: true,
     tint: [0.86, 1.0, 1.06],
     place: (c) => {
-      if (c.h < 6 || c.h > 96) return 0;
+      if (c.h < 6 || c.h > 170) return 0;
       const climate =
         smoothstep(0.22, 0.55, c.moisture) * band(c.temp, 0.12, 0.34, 0.6);
       const density = climate * c.grove * 0.77 * (1 - c.special.strength);

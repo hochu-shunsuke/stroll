@@ -8,6 +8,9 @@ const C_ROCK = srgb(0x878175);
 const C_ROCK_DARK = srgb(0x6b6760);
 const C_SNOW = srgb(0xe7ecef);
 
+/** 草地のむらの強さ。patch=±1 で明るさが ±この割合だけ揺れる。 */
+const PATCH_TONE = 0.07;
+
 /**
  * 気候帯ごとの地面の色。気温 3 段 × 湿り気 3 段の格子を双一次で混ぜる。
  *
@@ -54,12 +57,24 @@ export function shadeTerrain(
   temp: number,
   moisture: number,
   special: SpecialHit,
+  patch: number,
   out: Float32Array,
   o: number,
 ): void {
-  // 岩肌: 急斜面ほど、そして高所ほど土が乗らない。
+  // 岩肌は「急で土が乗らない面」と「木も草も育たない寒い高所」だけに出す。
+  //
+  // **標高だけで岩にしないこと。** 以前は 35〜80m で一律に岩へ寄せていて、
+  // 60m を越えた陸の 94〜100% が岩か雪になり、山が全部はげ山に見えた。
+  // 高さの効果は気温（標高で下がる）が既に持っているので、ここでは寒さで見る。
+  // 暑い地方の山は上まで緑、寒い地方の山は岩と雪になり、山ごとに表情が変わる。
+  //
+  // patch（-1..1 の低周波ノイズ）で境目をずらす。閾値を固定すると、
+  // 四角形単位で塗り分ける都合で雪線・岩線が階段状のギザギザになる。
+  const alpine = smoothstep(0.3, 0.16, temp + patch * 0.035);
   const rocky = clamp(
-    smoothstep(0.42, 0.72, slope) + smoothstep(35, 80, h) * 0.75,
+    smoothstep(0.6, 0.92, slope + patch * 0.08) +
+      alpine * 0.55 +
+      smoothstep(120, 190, h) * 0.5,
     0,
     1,
   );
@@ -75,6 +90,13 @@ export function shadeTerrain(
   let r = mix(mix(c00[0], c10[0], tk), mix(c01[0], c11[0], tk), mk);
   let g = mix(mix(c00[1], c10[1], tk), mix(c01[1], c11[1], tk), mk);
   let b = mix(mix(c00[2], c10[2], tk), mix(c01[2], c11[2], tk), mk);
+
+  // 草地のむら。同じ気候帯でも日当たりや土で色が揺れる。
+  // 明るい側は少し黄みへ、暗い側は少し青みへ振って、ただの明暗にしない。
+  const meadow = patch * PATCH_TONE;
+  r *= 1 + meadow * 1.2;
+  g *= 1 + meadow;
+  b *= 1 - meadow * 0.6;
 
   // 宝物区画: 気候の地面色を宝物の色で上書きする。
   // 浜辺・水中・岩・雪より前に混ぜるので、宝物の中でも崖や水際は自然に残る。
@@ -111,7 +133,8 @@ export function shadeTerrain(
   //
   // **閾値は 0.22 から下げてある。** 上の格子にタイガ（寒・中）を足したのに、
   // 前の閾値だと寒い側の 6 割が雪で塗り潰されて、その色が一度も見えなかった。
-  const snow = smoothstep(0.16, 0.03, temp) * (1 - smoothstep(0.55, 0.85, slope));
+  const snowTemp = temp + patch * 0.03;
+  const snow = smoothstep(0.16, 0.03, snowTemp) * (1 - smoothstep(0.62, 0.92, slope));
   r = mix(r, C_SNOW[0], snow);
   g = mix(g, C_SNOW[1], snow);
   b = mix(b, C_SNOW[2], snow);

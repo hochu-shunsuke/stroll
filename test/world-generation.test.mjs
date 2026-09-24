@@ -188,61 +188,154 @@ try {
     process.exitCode = 0;
   } else {
     const expected = {
-      terrain: {
-        k7p2mq9x: '5213cc7cbcafa0108d63',
-        a76nmz9h: '5e9e36f79a6e862ff92f',
-        itqherf3: '4325fb15eef782aeaac0',
-        sakurabc: '147ef27346d10547f115',
+      "terrain": {
+        "k7p2mq9x": "38ef83774d02c721ca4c",
+        "a76nmz9h": "76b74b1828d3c8656167",
+        "itqherf3": "ccb05e59ef6ea59d3ba1",
+        "sakurabc": "d9ff693fa2413b54918f"
       },
-      chunks: [
+      "chunks": [
         {
-          case: 'k7p2mq9x:0,0@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: '9c0fb47d8afa90752816',
+          "case": "k7p2mq9x:0,0@16",
+          "lengths": [
+            3456,
+            3456,
+            3456,
+            0
+          ],
+          "hash": "a9a892f00474efb0a47e"
         },
         {
-          case: 'a76nmz9h:4,-3@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: '28413f9f1582948bd86e',
+          "case": "a76nmz9h:4,-3@16",
+          "lengths": [
+            3456,
+            3456,
+            3456,
+            0
+          ],
+          "hash": "28413f9f1582948bd86e"
         },
         {
-          case: 'itqherf3:-5,2@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: 'f2f5acf370c706b62cca',
-        },
+          "case": "itqherf3:-5,2@16",
+          "lengths": [
+            3456,
+            3456,
+            3456,
+            0
+          ],
+          "hash": "6402af292832e58e2205"
+        }
       ],
-      scatter: [
+      "scatter": [
         {
-          case: 'k7p2mq9x:0,0@0',
-          kinds: [0, 6, 7, 1, 8, 9, 2, 3],
-          counts: [7, 4, 11, 1, 6, 2, 7, 93],
-          hash: 'af374320e4ad97f58258',
+          "case": "k7p2mq9x:0,0@0",
+          "kinds": [
+            0,
+            6,
+            7,
+            1,
+            8,
+            9,
+            10,
+            2,
+            3
+          ],
+          "counts": [
+            7,
+            4,
+            11,
+            1,
+            5,
+            2,
+            4,
+            7,
+            91
+          ],
+          "hash": "23a8752a65e188130356"
         },
         {
-          case: 'a76nmz9h:4,-3@0',
-          kinds: [2],
-          counts: [2],
-          hash: '0cf7bc71b8d9f3a9191d',
+          "case": "a76nmz9h:4,-3@0",
+          "kinds": [
+            2
+          ],
+          "counts": [
+            2
+          ],
+          "hash": "0cf7bc71b8d9f3a9191d"
         },
         {
-          case: 'itqherf3:-5,2@1',
-          kinds: [2],
-          counts: [4],
-          hash: 'd6b674d85846da640668',
-        },
+          "case": "itqherf3:-5,2@1",
+          "kinds": [
+            2
+          ],
+          "counts": [
+            4
+          ],
+          "hash": "c8bf324e7a6739aae3b5"
+        }
       ],
-      trees: [
-        { name: '広葉樹 丸', kind: 0, vertices: 2940, hash: 'b36acb91a251fff50c9a' },
-        { name: '広葉樹 高', kind: 6, vertices: 3090, hash: '2bba82fde9dd4c5c39a1' },
-        { name: '広葉樹 傘', kind: 7, vertices: 3090, hash: '901eebf1c400dab04718' },
-        { name: '枯れ木', kind: 10, vertices: 3600, hash: 'ba7706d9b3f9b62d3d93' },
-        { name: '椰子', kind: 11, vertices: 690, hash: 'daeede3e4203008c2c4b' },
-        { name: '針葉樹 成木', kind: 1, vertices: 282, hash: '81f36e5c00dd3a82d713' },
-        { name: '針葉樹 若木', kind: 8, vertices: 198, hash: '1b487e0650b6e033ab92' },
-        { name: '針葉樹 老木', kind: 9, vertices: 324, hash: '0fb277db2be270c3a7c3' },
-        { name: '秋の木', kind: 4, vertices: 2340, hash: 'f2a9be78a2b496d1d030' },
-        { name: '桜', kind: 5, vertices: 2340, hash: 'ef94b35290a0a2d15a4c' },
-      ],
+      "trees": [
+        {
+          "name": "広葉樹 丸",
+          "kind": 0,
+          "vertices": 2940,
+          "hash": "b36acb91a251fff50c9a"
+        },
+        {
+          "name": "広葉樹 高",
+          "kind": 6,
+          "vertices": 3090,
+          "hash": "2bba82fde9dd4c5c39a1"
+        },
+        {
+          "name": "広葉樹 傘",
+          "kind": 7,
+          "vertices": 3090,
+          "hash": "901eebf1c400dab04718"
+        },
+        {
+          "name": "枯れ木",
+          "kind": 10,
+          "vertices": 3600,
+          "hash": "ba7706d9b3f9b62d3d93"
+        },
+        {
+          "name": "椰子",
+          "kind": 11,
+          "vertices": 690,
+          "hash": "daeede3e4203008c2c4b"
+        },
+        {
+          "name": "針葉樹 成木",
+          "kind": 1,
+          "vertices": 282,
+          "hash": "81f36e5c00dd3a82d713"
+        },
+        {
+          "name": "針葉樹 若木",
+          "kind": 8,
+          "vertices": 198,
+          "hash": "1b487e0650b6e033ab92"
+        },
+        {
+          "name": "針葉樹 老木",
+          "kind": 9,
+          "vertices": 324,
+          "hash": "0fb277db2be270c3a7c3"
+        },
+        {
+          "name": "秋の木",
+          "kind": 4,
+          "vertices": 2340,
+          "hash": "f2a9be78a2b496d1d030"
+        },
+        {
+          "name": "桜",
+          "kind": 5,
+          "vertices": 2340,
+          "hash": "ef94b35290a0a2d15a4c"
+        }
+      ]
     };
     assert.deepEqual(
       actual,

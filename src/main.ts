@@ -354,6 +354,14 @@ function main(): void {
     });
   }
 
+  if (import.meta.env.DEV && previewMode === 'scene') {
+    // 景色の確認用。自動ブラウザから視点を置いてスクリーンショットを撮るために
+    // 内部を window へ出す。DEV の分岐ごと本番ビルドから消える。
+    (window as unknown as Record<string, unknown>).__stroll = { player, camera, terrain, chunks, spawn };
+    entryChosen = true;
+    overlay.setEntered();
+    startPlaying();
+  }
   if (previewFriends || previewGoal) {
     // 自動テスト用ブラウザは Pointer Lock を持たないため、このURLだけは入口を省く。
     // DEV の分岐ごと本番ビルドから消え、通常の開始処理には影響しない。

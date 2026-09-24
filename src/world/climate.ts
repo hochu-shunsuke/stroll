@@ -17,6 +17,10 @@ const RAIN_HIGH = 64;
 const RAIN_STRENGTH = 0.5;
 
 /** 森のかたまりの下限と振れ幅。下限 + 振れ幅/2 が 1.0 になるように取る。 */
+/** 気温が標高で下がり始める高さ（m）と、1m あたりの下がり方。 */
+const LAPSE_FROM = 20;
+const LAPSE_RATE = 0.0036;
+
 const GROVE_FLOOR = 0.42;
 const GROVE_RANGE = 1.18;
 
@@ -77,7 +81,10 @@ export class Climate {
   /** 気温 0..1（0 が寒い、1 が暑い）。標高が上がるほど冷える。 */
   temperatureAt(x: number, z: number, h: number): number {
     const base = clamp(fbm(this.nTemperature, x, z, 3, 0.0006) * 0.75 + 0.5, 0, 1);
-    const lapse = Math.max(0, h - 8) * 0.006;
+    // 逓減を強くしすぎないこと。0.006/m だった頃は 90m で 0.5 も冷え、
+    // 60m を越えた陸がどの気候でもツンドラと雪になって、山が全部同じ灰色に見えた。
+    // 今は低い山なら元の気候帯の色と森が中腹まで上がり、雪は高い峰に残る。
+    const lapse = Math.max(0, h - LAPSE_FROM) * LAPSE_RATE;
     return clamp(base - lapse, 0, 1);
   }
 }

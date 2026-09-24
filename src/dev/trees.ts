@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MORNING, Sky } from '../render/sky';
 import { TREE_CATALOG, buildCatalogGeometry } from '../render/treeCatalog';
+import { vegetation } from '../render/vegetation';
 
 /**
  * 木の見本帳（開発用）。`npm run dev` で /trees.html を開くと出る。
@@ -30,10 +31,12 @@ const sky = new Sky(scene, MORNING);
 // 霧は見本帳では邪魔なので薄くする。
 scene.fog = new THREE.FogExp2(new THREE.Color().setHex(MORNING.horizon, THREE.SRGBColorSpace), 0.0009);
 
-const material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+// 木は本番の材質そのもので見る。材質を別に作ると、光の当たり方が本番とずれる。
+const material = vegetation().material;
+const groundMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
 
 // 地面。
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), material);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), groundMaterial);
 {
   const g = ground.geometry as THREE.PlaneGeometry;
   g.rotateX(-Math.PI / 2);
@@ -97,9 +100,11 @@ let salt = 1;
 rebuild(salt);
 
 // ── 簡単な軌道カメラ ──
-let yaw = 0.5;
-let pitch = 0.28;
-let dist = 46;
+// ?yaw=&pitch=&dist= で視点を固定できる。スクリーンショットで形を比べるため。
+const viewParams = new URLSearchParams(location.search);
+let yaw = Number(viewParams.get('yaw') ?? 0.5);
+let pitch = Number(viewParams.get('pitch') ?? 0.28);
+let dist = Number(viewParams.get('dist') ?? 46);
 const target = new THREE.Vector3(0, 4, (Math.ceil(TREE_CATALOG.length / PER_ROW) - 1) * SPACING * 0.5);
 let dragging = false;
 let lastX = 0;
