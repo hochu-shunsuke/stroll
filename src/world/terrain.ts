@@ -12,7 +12,7 @@ import {
 } from './lake';
 import { mix, Noise2D, smoothstep } from './noise';
 import { type SpecialHit, specialAt } from './special';
-import { shadeTerrain } from './surfaceShade';
+import { surfaceTerrain } from './surfaceShade';
 import { TerrainShape } from './terrainShape';
 
 export const SEA_LEVEL = 0;
@@ -177,10 +177,10 @@ export class Terrain {
   }
 
   /**
-   * 面の色。気温 × 湿り気へ標高・傾き・特殊区画の効果を重ねる。
-   * out に 0..1 のリニア RGB を書き込む。
+   * 地面の層（土台・岩・雪の色と量）。気温 × 湿り気へ標高・傾き・特殊区画の効果を重ねる。
+   * out[o..o+SURFACE_STRIDE) に書く。境目は画素ごとに切る（render/terrainMaterial.ts）。
    */
-  shade(
+  surface(
     h: number,
     slope: number,
     temp: number,
@@ -189,6 +189,6 @@ export class Terrain {
     out: Float32Array,
     o: number,
   ): void {
-    shadeTerrain(h, slope, temp, moisture, special, out, o);
+    surfaceTerrain(h, slope, temp, moisture, special, out, o);
   }
 }
