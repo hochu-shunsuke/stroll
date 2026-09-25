@@ -563,7 +563,7 @@ function main(): void {
 
   // 開発用: 自動ブラウザから視点を動かして画面を撮るための窓口。本番ビルドには入らない。
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__stroll = { player, camera, chunks, spawn, renderer };
+    (window as unknown as Record<string, unknown>).__stroll = { player, camera, chunks, spawn, renderer, water, sky };
   }
 
   renderer.setAnimationLoop(() => {
