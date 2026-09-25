@@ -8,6 +8,8 @@ import { Avatars } from './render/avatars';
 import { DestinationRing } from './render/destinationRing';
 import { MORNING, Sky } from './render/sky';
 import { Water } from './render/water';
+import { RegionField } from './render/regionField';
+import { updateIslandLight } from './render/islandLight';
 import { ChunkManager } from './render/chunkManager';
 import { Terrain } from './world/terrain';
 import { Overlay } from './ui/overlay';
@@ -98,6 +100,8 @@ function main(): void {
   // 雲の並びも合言葉から決める。同じ世界なら空も同じ。
   const sky = new Sky(scene, MORNING, hashSeed(seed)[0]);
   const water = new Water(scene, sky.sunDirection, MORNING.horizon, MORNING.sun);
+  // カメラの周りの地図（海の水深と、焼き込んだ山の影・谷の暗さ）。
+  const field = new RegionField(seed, water, sky.sunDirection);
   // 湖の水面はチャンクが作るが、材質は海と共有する。
   const chunks = new ChunkManager(scene, seed, water.material);
 
@@ -563,7 +567,7 @@ function main(): void {
 
   // 開発用: 自動ブラウザから視点を動かして画面を撮るための窓口。本番ビルドには入らない。
   if (import.meta.env.DEV) {
-    (window as unknown as Record<string, unknown>).__stroll = { player, camera, chunks, spawn, renderer, water, sky };
+    (window as unknown as Record<string, unknown>).__stroll = { player, camera, chunks, spawn, renderer, water, sky, field };
   }
 
   renderer.setAnimationLoop(() => {
@@ -641,6 +645,9 @@ function main(): void {
         ? friendIndicators(camera, player.position, edgeTargets)
         : [],
     );
+
+    field.update(camera.position.x, camera.position.z);
+    updateIslandLight(dt);
 
     const shouldRender = playing || elapsed - lastIdleRender >= 1 / 20;
     if (shouldRender) {

@@ -149,8 +149,13 @@ PC とタッチで同じ `Player` を使い、通常 78m/s、高速 112m/s に�
   判定は `terrain.splitsAlongMainDiagonal()` に 1 つだけ置いて両方から使う。
   ベタ書きで揃えていた頃は機構で守られていなかった
 - **`LOD_STEPS` と `LOD_RINGS` は同じ長さ。** 起動時に検査している
-- **Worker の生成は文字列リテラル**（`new URL('../world/worker.ts', import.meta.url)`）。
+- **Worker の生成は文字列リテラル**（`new URL('../world/worker.ts', import.meta.url)`、
+  `render/regionField.ts` の `../world/fieldWorker.ts` も同じ）。
   ファイルを移動しても型検査は気づかず、ビルドで初めて落ちる
+- **海の色と山の影は「カメラの周りの地図」から引く**（`render/regionField.ts`）。無限の世界は
+  hakoniwa のように全体を 1 度で計算できないので、6km 四方を 16m 間隔で引いて、約 1km 動くごとに
+  専用の Worker で作り直す（1 回 約 0.5s）。高さは海のシェーダーの水深（浅瀬の色・岸の泡）に、
+  焼き込んだ光（`world/lighting.ts`）は地面と木の材質に使う。地図の外の山の影は入らない
 - **`EYE_HEIGHT` は通信で送る `y` の意味そのもの。** アバターの身長もこれに従う。
   値を変えると他人のアバターだけ地面に沈む
 - **透明なものの描画順は `render/order.ts` に集約。** 水面はカメラ追従の板なので

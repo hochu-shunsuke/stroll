@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { C_SNOW } from '../world/surfaceShade';
+import { injectIslandLight } from './islandLight';
 import { NOISE_CELLS, createNoiseTexture } from './noiseTexture';
 
 /**
@@ -163,6 +164,7 @@ export function createTerrainMaterial(options: TerrainMaterialOptions = {}): THR
         '#include <normal_fragment_maps>',
         '#include <normal_fragment_maps>\n  normal = terrainBump(-vViewPosition, normal, terrainHeight);',
       );
+    injectIslandLight(shader, 'vTerrainPos.xz');
   };
   material.customProgramCacheKey = () => `terrain:${options.cacheKey ?? ''}`;
   return material;
