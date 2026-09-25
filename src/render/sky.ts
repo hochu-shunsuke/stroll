@@ -216,6 +216,7 @@ export const MORNING: SkyPreset = {
 //  - 濃さと高さは**シェーダに直接埋め込んでいる**。uniform にすると three が
 //    霧の uniform を配る仕組み（scene.fog 由来の色と濃さだけ）に乗らず、
 //    マテリアルによって値が届いたり届かなかったりする。
+//  - 太陽の向きと朝日の色も埋め込む（霞が太陽の側で明るむ）。空の sunDirection と同じ式。
 //  - 使えるのは `position` と `modelMatrix` だけ。水面は独自の頂点シェーダで
 //    `transformed` を持たない。`instanceMatrix` は植生（InstancedMesh）にしか無い。
 //  - FogExp2 前提で書いている（線形の Fog に変えると fogDensity が来ず落ちる）。
@@ -223,14 +224,24 @@ export const MORNING: SkyPreset = {
 // ---------------------------------------------------------------------------
 let heightFogInstalled = false;
 
+/** 太陽の側の霞が、朝日の色へ寄る強さ（0..1）。 */
+const SUN_HAZE_STRENGTH = 0.6;
+
 function installHeightFog(preset: SkyPreset): void {
   if (heightFogInstalled) return;
   heightFogInstalled = true;
+  // 霧の色は出力の色空間（sRGB）で混ぜるので、朝日の色も sRGB のまま埋め込む。
+  const el = THREE.MathUtils.degToRad(preset.elevation);
+  const az = THREE.MathUtils.degToRad(preset.azimuth);
+  const f = (v: number) => v.toFixed(4);
+  const sun = `vec3( ${f(Math.cos(el) * Math.sin(az))}, ${f(Math.sin(el))}, ${f(Math.cos(el) * Math.cos(az))} )`;
+  const hex = preset.sun;
+  const sunHaze = `vec3( ${f(((hex >> 16) & 255) / 255)}, ${f(((hex >> 8) & 255) / 255)}, ${f((hex & 255) / 255)} )`;
 
   THREE.ShaderChunk.fog_pars_vertex = /* glsl */ `
     #ifdef USE_FOG
       varying float vFogDepth;
-      varying float vFogHeight;
+      varying vec3 vFogWorld;
     #endif
   `;
 
@@ -241,7 +252,7 @@ function installHeightFog(preset: SkyPreset): void {
       #ifdef USE_INSTANCING
         fogWorldPos = instanceMatrix * fogWorldPos;
       #endif
-      vFogHeight = ( modelMatrix * fogWorldPos ).y;
+      vFogWorld = ( modelMatrix * fogWorldPos ).xyz;
     #endif
   `;
 
@@ -250,17 +261,21 @@ function installHeightFog(preset: SkyPreset): void {
       uniform vec3 fogColor;
       uniform float fogDensity;
       varying float vFogDepth;
-      varying float vFogHeight;
+      varying vec3 vFogWorld;
     #endif
   `;
 
   THREE.ShaderChunk.fog_fragment = /* glsl */ `
     #ifdef USE_FOG
       // 低い土地ほど霧が濃い。丘は靄の上に抜け、水際と低地に残る。
-      float fogLow = 1.0 - smoothstep( 0.0, ${preset.fogHeightTop.toFixed(1)}, vFogHeight );
+      float fogLow = 1.0 - smoothstep( 0.0, ${preset.fogHeightTop.toFixed(1)}, vFogWorld.y );
       float fogD = fogDensity * ( 1.0 + ${preset.fogHeightBoost.toFixed(2)} * fogLow );
       float fogFactor = 1.0 - exp( - fogD * fogD * vFogDepth * vFogDepth );
-      gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+      // 太陽の方を向くほど、霞が朝日の色に明るむ（空気の粒が光を前へ散らすため）。
+      // 背を向けた側は青い霞のまま。遠くの山が、太陽の側では金色に、反対側では青く溶ける。
+      float fogSun = max( dot( normalize( vFogWorld - cameraPosition ), ${sun} ), 0.0 );
+      vec3 fogTint = mix( fogColor, ${sunHaze}, pow( fogSun, 6.0 ) * ${SUN_HAZE_STRENGTH.toFixed(2)} );
+      gl_FragColor.rgb = mix( gl_FragColor.rgb, fogTint, fogFactor );
     #endif
   `;
 }

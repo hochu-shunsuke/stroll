@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { vegetation } from './vegetation';
 import { CHUNK_SIZE, LOD_RINGS } from '../world/chunk';
 import { RENDER_ORDER } from './order';
+import { createTerrainMaterial } from './terrainMaterial';
 import type { BuiltChunk, WorkerRequest } from '../world/worker';
 
 const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
@@ -46,7 +47,7 @@ export class ChunkManager {
 
   constructor(scene: THREE.Scene, seed: string, waterMaterial: THREE.Material) {
     this.scene = scene;
-    this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.material = createTerrainMaterial();
     this.waterMaterial = waterMaterial;
 
     const count = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
@@ -155,6 +156,9 @@ export class ChunkManager {
     geo.setAttribute('position', new THREE.BufferAttribute(data.position, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(data.normal, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(data.color, 3));
+    // 0..255 に詰めてある。normalized で 0..1 として材質に渡る。
+    geo.setAttribute('rock', new THREE.BufferAttribute(data.rock, 3, true));
+    geo.setAttribute('surf', new THREE.BufferAttribute(data.surf, 3, true));
     geo.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geo, this.material);

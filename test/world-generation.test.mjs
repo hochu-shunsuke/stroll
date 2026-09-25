@@ -93,9 +93,11 @@ try {
         arrays.position.length,
         arrays.normal.length,
         arrays.color.length,
+        arrays.rock.length,
+        arrays.surf.length,
         arrays.water.length,
       ],
-      hash: digest(arrays.position, arrays.normal, arrays.color, arrays.water),
+      hash: digest(arrays.position, arrays.normal, arrays.color, arrays.rock, arrays.surf, arrays.water),
     };
   });
 
@@ -197,18 +199,18 @@ try {
       chunks: [
         {
           case: 'k7p2mq9x:0,0@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: '9c0fb47d8afa90752816',
+          lengths: [3456, 3456, 3456, 3456, 3456, 0],
+          hash: 'dabf54bf027d9d5070d4',
         },
         {
           case: 'a76nmz9h:4,-3@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: '28413f9f1582948bd86e',
+          lengths: [3456, 3456, 3456, 3456, 3456, 0],
+          hash: 'f196469c6efae7854a1c',
         },
         {
           case: 'itqherf3:-5,2@16',
-          lengths: [3456, 3456, 3456, 0],
-          hash: 'f2f5acf370c706b62cca',
+          lengths: [3456, 3456, 3456, 3456, 3456, 0],
+          hash: 'a271cc96a5b9c1c76688',
         },
       ],
       scatter: [

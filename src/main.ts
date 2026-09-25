@@ -561,6 +561,11 @@ function main(): void {
   let elapsed = 0;
   let lastIdleRender = -Infinity;
 
+  // 開発用: 自動ブラウザから視点を動かして画面を撮るための窓口。本番ビルドには入らない。
+  if (import.meta.env.DEV) {
+    (window as unknown as Record<string, unknown>).__stroll = { player, camera, chunks, spawn, renderer, water, sky };
+  }
+
   renderer.setAnimationLoop(() => {
     // タブを離れて戻ったときに一気に進まないよう上限を掛ける。
     timer.update();

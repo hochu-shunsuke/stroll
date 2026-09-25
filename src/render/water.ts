@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import { RENDER_ORDER } from './order';
+import { WAVE_SLOPE, createWaveTexture } from './waveTexture';
 
 const vert = /* glsl */ `
   varying vec3 vWorld;
@@ -24,40 +25,52 @@ const frag = /* glsl */ `
   uniform vec3 uSkyColor;
   uniform vec3 uSunColor;
   uniform vec3 uSunDir;
+  uniform sampler2D uWaves;
   varying vec3 vWorld;
 
   #include <fog_pars_fragment>
 
-  // 向きと速さの違う波を重ね、周期が読めないようにする。
-  float waveHeight(vec2 p) {
-    float h = 0.0;
-    h += sin(dot(p, vec2(0.062, 0.031)) + uTime * 0.55) * 0.55;
-    h += sin(dot(p, vec2(-0.041, 0.074)) + uTime * 0.42) * 0.45;
-    h += sin(dot(p, vec2(0.121, -0.096)) + uTime * 0.83) * 0.20;
-    h += sin(dot(p, vec2(0.198, 0.164)) + uTime * 1.15) * 0.10;
-    return h;
+  // 波の模様（render/waveTexture.ts）。r,g = 傾き、b = 傾きの 2 乗、a = 高さ。
+  // 大きさと向きと流れる向きを変えて 3 回引く。ミップマップで遠くほど均され、
+  // 均されて消えた波の傾きは「分散」として残る（照り返しの広がりに使う）。
+  // **少数の正弦波の和に戻さないこと。** 周期が揃って、遠くで斜めの格子模様になる。
+  void waveLayer(vec2 uv, float gain, inout vec2 slope, inout float variance, inout float height) {
+    vec4 t = texture2D(uWaves, uv);
+    vec2 s = (t.xy * 2.0 - 1.0) * WAVE_SLOPE;
+    float meanSq = t.z * 2.0 * WAVE_SLOPE * WAVE_SLOPE;
+    slope += s * gain;
+    variance += max(0.0, meanSq - dot(s, s)) * gain * gain;
+    height += (t.w - 0.5) * gain;
   }
 
   void main() {
     vec2 p = vWorld.xz;
 
-    // 高さ場の差分から法線を作る。細かいさざ波はここだけで表現する。
-    float e = 1.2;
-    float hx = waveHeight(p + vec2(e, 0.0)) - waveHeight(p - vec2(e, 0.0));
-    float hz = waveHeight(p + vec2(0.0, e)) - waveHeight(p - vec2(0.0, e));
-    vec3 n = normalize(vec3(-hx * 0.55, 1.0, -hz * 0.55));
+    // 波: 数十 m のうねり、数 m の風の波、数十 cm のさざ波。大きさの比を整数にしない（繰り返しが揃わない）。
+    vec2 slope = vec2(0.0);
+    float variance = 0.0006;
+    float height = 0.0;
+    waveLayer(p / 337.0 + uTime * vec2(0.0072, 0.0031), 0.3, slope, variance, height);
+    waveLayer(mat2(0.8, -0.6, 0.6, 0.8) * p / 61.0 + uTime * vec2(-0.021, 0.013), 0.35, slope, variance, height);
+    waveLayer(mat2(0.28, 0.96, -0.96, 0.28) * p / 17.3 + uTime * vec2(0.047, -0.031), 0.3, slope, variance, height);
+    vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
 
     vec3 viewDir = normalize(cameraPosition - vWorld);
     float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0);
 
-    // 見下ろすほど水の色、浅い角度ほど空の映り込み。
+    // 見下ろすほど水の色、浅い角度ほど空の映り込み。うねりの山は少し明るい（遠くでは均されて消える）。
     vec3 body = mix(uDeep, uShallow, clamp(dot(n, viewDir), 0.0, 1.0) * 0.65);
+    body *= 1.0 + height * 0.2;
     vec3 col = mix(body, uSkyColor, clamp(fres * 1.25, 0.0, 0.92));
 
-    // 太陽の細い帯。穏やかさを壊さない程度に。
+    // 太陽の照り返し。波の面の傾きが、太陽を目に返す向きにどれだけ散っているかで決める
+    // （傾きの分布を正規分布とみなす。Bruneton et al. 2010）。近くでは面ごとに光り、
+    // 遠くでは均された波の分散で広がって、太陽の下に光の道ができる。
     vec3 h = normalize(uSunDir + viewDir);
-    float spec = pow(max(dot(n, h), 0.0), 220.0);
-    col += uSunColor * spec * 1.6;
+    vec2 zeta = h.xz / max(h.y, 0.05) + slope;
+    float glint = exp(-0.5 * dot(zeta, zeta) / variance) / (6.2832 * variance);
+    float schlick = 0.02 + 0.98 * pow(1.0 - clamp(dot(viewDir, h), 0.0, 1.0), 5.0);
+    col += uSunColor * min(glint * schlick * 0.35, 3.0);
 
     float alpha = mix(0.72, 0.97, fres);
     gl_FragColor = vec4(col, alpha);
@@ -73,10 +86,6 @@ function col(hex: number): THREE.Color {
   return new THREE.Color().setHex(hex, THREE.SRGBColorSpace);
 }
 
-/**
- * 海面と湖面。1 枚の大きな面をカメラに追従させて無限に見せる。
- * 波は法線だけで作るので、面の分割は粗くてよい。
- */
 /**
  * 水の材質。海の板と、チャンクごとの内陸水面（湖）が**同じものを共有する**。
  *
@@ -100,10 +109,11 @@ export function waterMaterial(
         uSkyColor: { value: col(skyHorizon) },
         uSunColor: { value: col(sunHex) },
         uSunDir: { value: sunDirection.clone() },
+        uWaves: { value: createWaveTexture() },
         ...THREE.UniformsLib.fog,
       },
       vertexShader: vert,
-      fragmentShader: frag,
+      fragmentShader: `#define WAVE_SLOPE ${WAVE_SLOPE.toFixed(3)}\n${frag}`,
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,

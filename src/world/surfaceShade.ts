@@ -6,7 +6,7 @@ const C_SEABED = srgb(0x4d5a52);
 const C_SAND = srgb(0xcbbd97);
 const C_ROCK = srgb(0x878175);
 const C_ROCK_DARK = srgb(0x6b6760);
-const C_SNOW = srgb(0xe7ecef);
+export const C_SNOW = srgb(0xe7ecef);
 
 /**
  * 気候帯ごとの地面の色。気温 3 段 × 湿り気 3 段の格子を双一次で混ぜる。
@@ -45,10 +45,19 @@ function segment(stops: readonly number[], t: number): [number, number] {
 }
 
 /**
- * 面の色。気温 × 湿り気で気候帯が決まり、そこへ標高・傾きの効果を重ねる。
- * out に 0..1 のリニア RGB を書き込む。
+ * 1 点ぶんの地面の層の並び。0..2 土台の色（草・土・砂・海底）、3..5 岩の色、6 岩の量、7 雪の量。
+ *
+ * **ここでは色を混ぜ切らない。** 層と量を頂点ごとに返し、境目は画素ごとに揺らして切る
+ * （render/terrainMaterial.ts）。四角形ごとに 1 色に混ぜ切っていた頃は、雪と岩の境が
+ * 格子に揃い、遠くの粗いチャンクほど大きな市松模様になった（利用者の指摘）。
  */
-export function shadeTerrain(
+export const SURFACE_STRIDE = 8;
+
+/**
+ * 地面の層。気温 × 湿り気で気候帯が決まり、そこへ標高・傾きの効果を重ねる。
+ * 色は 0..1 のリニア RGB。重ねる順は 土台（気候・宝物・浜・水中）→ 岩 → 雪。
+ */
+export function surfaceTerrain(
   h: number,
   slope: number,
   temp: number,
@@ -99,12 +108,6 @@ export function shadeTerrain(
 
   // 岩。高いところほど暗く冷たい灰に。
   const rockMix = smoothstep(28, 68, h);
-  const rr = mix(C_ROCK[0], C_ROCK_DARK[0], rockMix);
-  const rg = mix(C_ROCK[1], C_ROCK_DARK[1], rockMix);
-  const rb = mix(C_ROCK[2], C_ROCK_DARK[2], rockMix);
-  r = mix(r, rr, rocky);
-  g = mix(g, rg, rocky);
-  b = mix(b, rb, rocky);
 
   // 雪: 十分に寒く、あまり急でない面に積もる。気温は標高でも下がるので、
   //     暑い地方でも高い山の頂は白くなる（頂上では lapse で気温が 0 に張り付く）。
@@ -112,11 +115,13 @@ export function shadeTerrain(
   // **閾値は 0.22 から下げてある。** 上の格子にタイガ（寒・中）を足したのに、
   // 前の閾値だと寒い側の 6 割が雪で塗り潰されて、その色が一度も見えなかった。
   const snow = smoothstep(0.16, 0.03, temp) * (1 - smoothstep(0.55, 0.85, slope));
-  r = mix(r, C_SNOW[0], snow);
-  g = mix(g, C_SNOW[1], snow);
-  b = mix(b, C_SNOW[2], snow);
 
   out[o] = r;
   out[o + 1] = g;
   out[o + 2] = b;
+  out[o + 3] = mix(C_ROCK[0], C_ROCK_DARK[0], rockMix);
+  out[o + 4] = mix(C_ROCK[1], C_ROCK_DARK[1], rockMix);
+  out[o + 5] = mix(C_ROCK[2], C_ROCK_DARK[2], rockMix);
+  out[o + 6] = rocky;
+  out[o + 7] = snow;
 }
