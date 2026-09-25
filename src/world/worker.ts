@@ -30,6 +30,7 @@ export interface BuiltChunk {
   color: Float32Array;
   rock: Uint8Array;
   surf: Uint8Array;
+  index: Uint16Array | Uint32Array;
   /** 内陸の水面（座標だけ）。無ければ長さ 0。 */
   water: Float32Array;
   batches: BuiltBatch[];
@@ -59,6 +60,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     color: geo.color,
     rock: geo.rock,
     surf: geo.surf,
+    index: geo.index,
     water: geo.water,
     batches,
   };
@@ -70,6 +72,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     geo.color.buffer as ArrayBuffer,
     geo.rock.buffer as ArrayBuffer,
     geo.surf.buffer as ArrayBuffer,
+    geo.index.buffer as ArrayBuffer,
     geo.water.buffer as ArrayBuffer,
   ];
   for (const b of batches) {

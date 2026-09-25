@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { injectIslandLight } from './islandLight';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
 import { TREE_CATALOG, buildCatalogGeometry } from './treeCatalog';
@@ -56,10 +57,24 @@ export function vegetation() {
       g.computeVertexNormals();
       g.computeBoundingSphere();
     }
-    cache = {
-      geometries,
-      material: new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }),
+    const material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    // 山の影の中の木は暗く（焼き込んだ光を、木の根元の位置で引く）。
+    material.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vTreeXZ;')
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+          #ifdef USE_INSTANCING
+            vTreeXZ = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
+          #else
+            vTreeXZ = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
+          #endif`,
+        );
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vTreeXZ;');
+      injectIslandLight(shader, 'vTreeXZ');
     };
+    cache = { geometries, material };
   }
   return cache;
 }

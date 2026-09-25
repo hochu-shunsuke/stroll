@@ -12,7 +12,7 @@ import {
 } from './lake';
 import { mix, Noise2D, smoothstep } from './noise';
 import { type SpecialHit, specialAt } from './special';
-import { surfaceTerrain } from './surfaceShade';
+import { type SurfaceFields, surfaceTerrain } from './surfaceShade';
 import { TerrainShape } from './terrainShape';
 
 export const SEA_LEVEL = 0;
@@ -60,6 +60,9 @@ export class Terrain {
   private readonly lakeSalt: number;
   private readonly nSpecialEdge: Noise2D;
   private readonly specialSalt: number;
+  /** 表示専用のむら（草の色味・岩の種類）。標高・植生の配置には使わない。 */
+  private readonly nPatch: Noise2D;
+  private readonly nRock: Noise2D;
 
   constructor(seed: string) {
     this.seed = seed;
@@ -71,6 +74,19 @@ export class Terrain {
     this.lakeSalt = (a ^ 0x5bd1e995) >>> 0;
     this.nSpecialEdge = new Noise2D((a ^ 0x165667b1) >>> 0);
     this.specialSalt = (b ^ 0x9e3779b1) >>> 0;
+    this.nPatch = new Noise2D((d ^ 0x61c88647) >>> 0);
+    this.nRock = new Noise2D((c ^ 0x2545f491) >>> 0);
+  }
+
+  /**
+   * 地面のむら -1..1。数十 m の波長で、草の色味と雪線・岩線の位置を揺らす。
+   * 色にしか使わないので標高・植生の配置には影響しない。
+   */
+  patchAt(x: number, z: number): number {
+    return (
+      this.nPatch.noise(x * 0.011, z * 0.011) * 0.65 +
+      this.nPatch.noise(x * 0.037 + 31.7, z * 0.037 - 17.3) * 0.35
+    );
   }
 
   /** 宝物区画の判定。詳しくは special.ts。 */
@@ -177,18 +193,24 @@ export class Terrain {
   }
 
   /**
-   * 地面の層（土台・岩・雪の色と量）。気温 × 湿り気へ標高・傾き・特殊区画の効果を重ねる。
+   * 地面の層（土台・岩・雪の色と量、凹みの明暗）。気温 × 湿り気の気候帯へ、地形の形
+   * （16m 尺度の傾きと曲がり）・標高・特殊区画の効果を重ねる。slopeLocal はその点の細部の傾き。
    * out[o..o+SURFACE_STRIDE) に書く。境目は画素ごとに切る（render/terrainMaterial.ts）。
    */
   surface(
+    x: number,
+    z: number,
     h: number,
-    slope: number,
+    slopeLocal: number,
+    fields: SurfaceFields,
     temp: number,
     moisture: number,
     special: SpecialHit,
     out: Float32Array,
     o: number,
   ): void {
-    surfaceTerrain(h, slope, temp, moisture, special, out, o);
+    // 岩の種類は地方ごと（波長 約 1.5km）。
+    const rockTone = this.nRock.noise(x * 0.0007, z * 0.0007);
+    surfaceTerrain(h, slopeLocal, fields, temp, moisture, special, this.patchAt(x, z), rockTone, out, o);
   }
 }
