@@ -247,7 +247,9 @@ export class Player {
     this.velocity.set(0, 0, 0);
     this.verticalVelocity = 0;
     this.grounded = false;
-    const floor = this.groundAt(snapshot.x, snapshot.z) + (snapshot.flying ? 1.2 : EYE_HEIGHT);
+    const floor = snapshot.flying
+      ? Math.max(this.groundAt(snapshot.x, snapshot.z), this.waterSurfaceAt(snapshot.x, snapshot.z)) + 1.2
+      : this.groundAt(snapshot.x, snapshot.z) + EYE_HEIGHT;
     if (this.position.y < floor) this.position.y = floor;
   }
 
@@ -417,8 +419,10 @@ export class Player {
   }
 
   private keepAboveGround(): void {
-    // 地面にめり込まないようにだけ押し戻す。
-    const floor = this.groundAt(this.position.x, this.position.z) + 1.2;
+    // 地面と水面にめり込まないようにだけ押し戻す。鳥は水に潜らない。
+    // 潜れると、描くつもりのない水の中（海の底や湖の底）が真横から見えてしまう。
+    const { x, z } = this.position;
+    const floor = Math.max(this.groundAt(x, z), this.waterSurfaceAt(x, z)) + 1.2;
     if (this.position.y < floor) this.position.y = floor;
     this.grounded = false;
   }

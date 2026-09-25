@@ -27,6 +27,12 @@ const rampTerrain = {
   waterLevelAt: () => Number.NEGATIVE_INFINITY,
 };
 
+const seaTerrain = {
+  // 海抜 -40m の海底。飛んで見下ろしながら進んでも、水面より下へ潜ってはいけない。
+  heightOnGrid: () => -40,
+  waterLevelAt: () => Number.NEGATIVE_INFINITY,
+};
+
 const plateauTerrain = {
   heightOnGrid: () => 120,
   waterLevelAt: () => Number.NEGATIVE_INFINITY,
@@ -203,6 +209,20 @@ try {
   }
 
   {
+    const player = new Player(seaTerrain, 0, 0);
+    const camera = new THREE.PerspectiveCamera();
+    player.position.y = 30;
+    player.toggleFlying();
+    player.pitch = -0.9;
+    player.setMoveAxis(0, 1, 0);
+    run(player, camera, 3);
+    assert(
+      player.position.y >= 1.2 - 1e-6,
+      `飛行中に水面より下へ潜っています: y=${player.position.y.toFixed(2)} m`,
+    );
+  }
+
+  {
     const player = new Player(plateauTerrain, 0, 0);
     assert(
       Math.abs(player.altitudeAboveGround - EYE_HEIGHT) < 0.01,
@@ -305,7 +325,7 @@ try {
     'PASS  飛行体験',
     `巡航 ${FLY_CRUISE_SPEED} m/s`,
     `高速 ${FLY_BOOST_SPEED} m/s`,
-    '自動飛行の進路・安全高度・位置復帰',
+    '自動飛行の進路・安全高度・位置復帰・水に潜らない',
   );
 } finally {
   await server.close();
