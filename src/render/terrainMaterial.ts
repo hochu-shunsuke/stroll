@@ -3,19 +3,17 @@ import { C_SNOW } from '../world/surfaceShade';
 import { NOISE_CELLS, createNoiseTexture } from './noiseTexture';
 
 /**
- * 地面の材質。チャンクの頂点は 3 つの層を持つ（world/surfaceShade.ts）──
- * 土台の色、岩の色、岩と雪の量。ここで画素ごとに混ぜる。
- *
- * **境目は画素ごとに、世界座標のノイズで揺らしてから切る。** 四角形ごとに 1 色で塗っていた頃は、
- * 雪と岩の境が格子に揃って階段と市松模様になった（遠くの粗いチャンクほど四角が大きい）。
- * 量は頂点の間でなめらかにつながるので、境目は格子と関係なく自然な線になる。
- *
- * ローポリの見た目（面ごとの陰影と、面ごとのわずかな明暗）はそのまま残す。
- * 面の明暗は雪の上では弱める。強いままだと、白い雪原に灰色の四角が並ぶ。
+ * 地面の材質（hakoniwa と同じ作り）。チャンクの頂点は 3 つの層を持つ（world/surfaceShade.ts）──
+ * 土台の色、岩の色、岩と雪の量。
+ * ここで画素ごとに次をする。
+ *   - 岩と雪の境目を、世界座標のノイズで揺らしてから切る。頂点や面の単位で切ると、
+ *     境目が格子の四角に揃って市松模様になった（遠くの粗いチャンクほど四角が大きい）
+ *   - 細かい質感: 草のまだら、岩の地層と凹凸、雪のわずかなうねり。明るさと法線の両方を揺らす
+ *   - 凹みの明暗（大きな地形の曲がりから、頂点ごとに求めてある）
  *
  * ノイズは起動時に作ったテクスチャから引く（render/noiseTexture.ts）。画素ごとに計算するより軽く、
- * 細かすぎる模様はミップマップが均すので、遠くでちらつかない。崖では模様が縦に引き伸ばされないよう、
- * 面の向きに合わせて 3 方向から貼って混ぜる。
+ * 細かすぎる模様はミップマップが均すので、遠くでちらつかない。
+ * 表示専用なので決定性の決まりの外。
  */
 
 const SNOW = new THREE.Vector3(C_SNOW[0], C_SNOW[1], C_SNOW[2]);
@@ -40,13 +38,16 @@ const VERTEX = /* glsl */ `
 
 const PARS_FRAGMENT = /* glsl */ `
   uniform vec3 uSnow;
-  uniform sampler2D uNoise;
   varying vec3 vRock;
   varying vec3 vSurf;
   varying vec3 vTerrainPos;
   varying vec3 vTerrainNormal;
 
-  // 1 マス cell（m）の大きさで、4 つの独立なノイズ（中心 0）を引く。w は 3 方向の重み。
+  uniform sampler2D uNoise;
+  // 1 マス cell（m）の大きさで、4 つの独立なノイズ（中心 0）を引く。
+  // 真上からだけ貼ると、崖では模様が斜面に沿って縦に引き伸ばされ、毛皮のような筋になった。
+  // 面の向きに合わせて 3 方向から貼って混ぜる（triplanar）。w は 3 方向の重み。
+  // 細かすぎて見分けられない所はミップマップが均して 0 に寄る。
   vec4 terrainNoise(vec3 pos, vec3 w, float cell, mat2 turn) {
     float s = 1.0 / (cell * NOISE_CELLS);
     vec4 top = texture2D(uNoise, turn * pos.xz * s);
@@ -54,45 +55,115 @@ const PARS_FRAGMENT = /* glsl */ `
     vec4 side = texture2D(uNoise, turn * pos.zy * s + 0.71);
     return top * w.y + front * w.z + side * w.x - 0.5;
   }
-  // 境目を揺らしてから切る。量が 0 や 1 の所は揺らさない。soft は境目の幅（0.5 で元の混ぜ方と同じ）。
-  float terrainCut(float amount, float wobble, float soft) {
-    return smoothstep(0.5 - soft, 0.5 + soft, amount + wobble * 4.0 * amount * (1.0 - amount));
+  // 境目を揺らしてから切る。量が 0 や 1 の所は揺らさない。
+  float terrainCut(float amount, float wobble) {
+    return smoothstep(0.4, 0.6, amount + wobble * 4.0 * amount * (1.0 - amount));
+  }
+  // 画素ごとの高さの揺らぎから法線を曲げる（Mikkelsen の手法。三次元の座標の微分だけで済む）。
+  vec3 terrainBump(vec3 pos, vec3 n, float height) {
+    vec3 sx = dFdx(pos);
+    vec3 sy = dFdy(pos);
+    vec3 r1 = cross(sy, n);
+    vec3 r2 = cross(n, sx);
+    float det = dot(sx, r1);
+    vec2 dh = vec2(dFdx(height), dFdy(height));
+    vec3 grad = sign(det) * (dh.x * r1 + dh.y * r2);
+    return normalize(abs(det) * n - grad);
   }
 `;
 
 const COLOR_FRAGMENT = /* glsl */ `
+  float up = normalize(vTerrainNormal).y;
+
+  // ノイズは 3 つの大きさで 4 つずつ。大きさの比を整数にせず、向きも回して繰り返しを揃えない。
   vec3 tw = pow(abs(normalize(vTerrainNormal)), vec3(4.0));
   tw /= tw.x + tw.y + tw.z;
-  // 数十 m のまとまりと、数 m の細かいぎざぎざ。大きさの比を整数にせず、向きも回す。
-  float wobble = terrainNoise(vTerrainPos, tw, 21.0, mat2(1.0, 0.0, 0.0, 1.0)).r * 0.55
-    + terrainNoise(vTerrainPos, tw, 5.3, mat2(0.8, -0.6, 0.6, 0.8)).r * 0.35
-    + terrainNoise(vTerrainPos, tw, 1.45, mat2(0.28, 0.96, -0.96, 0.28)).r * 0.18;
-  // 雪の縁ははっきり、岩と土の境は柔らかく（落ち着いた色調を保つ）。
-  float rockMask = terrainCut(vSurf.x, wobble, 0.22);
-  float snowMask = terrainCut(vSurf.y, wobble * 0.8 - 0.05, 0.1);
-  vec3 albedo = mix(mix(vColor.rgb, vRock, rockMask), uSnow, snowMask);
-  // 面の明暗は ÷2 で詰めてある（1 を越える明るい面があるため）。
-  float face = vSurf.z * 2.0;
-  face = mix(face, 1.0 - (1.0 - face) * 0.35, snowMask);
-  diffuseColor.rgb *= albedo * face;
+  vec4 nA = terrainNoise(vTerrainPos, tw, 21.0, mat2(1.0, 0.0, 0.0, 1.0));
+  vec4 nB = terrainNoise(vTerrainPos, tw, 5.3, mat2(0.8, -0.6, 0.6, 0.8));
+  vec4 nC = terrainNoise(vTerrainPos, tw, 1.45, mat2(0.28, 0.96, -0.96, 0.28));
+
+  // 境目の揺らぎ: 数十 m のまとまりと、数 m の細かいぎざぎざ。
+  float wobble = nA.r * 0.55 + nB.r * 0.35 + nC.r * 0.18;
+
+  // 岩: 頂点の量に、画素の急さを少し足す（細部の崖が岩として見える）。
+  // 足すのはかなり急な面だけ（45° を越えてから）。緩めると、川が彫った岸がどこも
+  // 白っぽい岩の帯になり、雪の土手のように見えた。
+  float rockAmt = clamp(vSurf.x + smoothstep(0.7, 0.45, up) * 0.35, 0.0, 1.0);
+  float rockMask = terrainCut(rockAmt, wobble);
+  // 雪: 急な面には積もらない。
+  float snowAmt = vSurf.y * smoothstep(0.5, 0.72, up);
+  float snowMask = terrainCut(snowAmt, wobble * 0.8 - 0.05);
+
+  // 土台（草・土・砂）: 1〜30m のまだら。明るい所は少し黄みへ。
+  float g1 = nA.g;
+  float g2 = nB.g;
+  float g3 = nC.g;
+  float grain = g1 * 0.5 + g2 * 0.35 + g3 * 0.3;
+  vec3 ground = vColor.rgb * (1.0 + grain * 0.45);
+  ground *= vec3(1.0 + g1 * 0.12, 1.0 + g1 * 0.05, 1.0 - g1 * 0.1);
+
+  // 岩: ゆるいまだらだけ。高さの sin で地層の縞を入れていたが、等間隔の横縞が
+  // 斜面に並んで模様に見えた（利用者の指摘）。規則的な縞は入れない。
+  float r1 = nA.a;
+  float r3 = nC.b;
+  vec3 rockCol = vRock * (1.0 + r1 * 0.2 + nB.b * 0.12 + r3 * 0.08);
+
+  // 雪: ほぼ白。風に削られた細かいうねり。
+  float s1 = nA.a;
+  float s2 = nB.a;
+  vec3 snowCol = uSnow * (1.0 + s1 * 0.07 + s2 * 0.04);
+
+  // 雪の切れ目から覗くのは、雪の深い所ほど岩（高い所の地面は草ではない）。
+  // 土台の色のままだと、雪原の中に黄緑の染みが浮いた。
+  vec3 bare = mix(ground, rockCol * 0.85, smoothstep(0.35, 0.75, snowAmt));
+  vec3 albedo = mix(ground, rockCol, rockMask);
+  albedo = mix(albedo, bare, (1.0 - rockMask) * smoothstep(0.2, 0.5, snowAmt));
+  albedo = mix(albedo, snowCol, snowMask);
+  // 凹みの明暗。雪の凹みは少し青く沈む。1 バイトに詰めるため ÷2 してある。
+  float ao = vSurf.z * 2.0;
+  albedo *= mix(vec3(ao), vec3(ao, ao * 1.02, ao * 1.08), snowMask);
+  diffuseColor.rgb *= albedo;
+
+  // 法線を曲げる高さの揺らぎ（m）。岩は凹凸を強く、雪はなめらか。
+  float terrainHeight = mix(
+    mix(g2 * 0.25 + g3 * 0.08, r1 * 0.7 + nB.b * 0.3 + r3 * 0.1, rockMask),
+    s1 * 0.5 + s2 * 0.12,
+    snowMask
+  );
 `;
 
-export function createTerrainMaterial(): THREE.MeshLambertMaterial {
+export interface TerrainMaterialOptions {
+  /** 断片シェーダーに足す宣言（uniform や関数）。 */
+  fragmentPars?: string;
+  /** main の先頭に足す文（discard の判定など）。変数 vTerrainPos を使える。 */
+  fragmentStart?: string;
+  uniforms?: Record<string, THREE.IUniform>;
+  /** シェーダーの作り分けの鍵。fragmentPars / fragmentStart を変えたら別の値にする。 */
+  cacheKey?: string;
+}
+
+export function createTerrainMaterial(options: TerrainMaterialOptions = {}): THREE.MeshLambertMaterial {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true });
   material.onBeforeCompile = (shader) => {
     noise ??= createNoiseTexture();
     shader.uniforms.uSnow = { value: SNOW };
     shader.uniforms.uNoise = { value: noise };
+    if (options.uniforms) Object.assign(shader.uniforms, options.uniforms);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${PARS_VERTEX}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERTEX}`);
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        `#include <common>\n#define NOISE_CELLS ${NOISE_CELLS.toFixed(1)}\n${PARS_FRAGMENT}`,
+        `#include <common>\n#define NOISE_CELLS ${NOISE_CELLS.toFixed(1)}\n${PARS_FRAGMENT}\n${options.fragmentPars ?? ''}`,
       )
-      .replace('#include <color_fragment>', COLOR_FRAGMENT);
+      .replace('void main() {', `void main() {\n${options.fragmentStart ?? ''}`)
+      .replace('#include <color_fragment>', COLOR_FRAGMENT)
+      .replace(
+        '#include <normal_fragment_maps>',
+        '#include <normal_fragment_maps>\n  normal = terrainBump(-vViewPosition, normal, terrainHeight);',
+      );
   };
-  material.customProgramCacheKey = () => 'terrain-layers';
+  material.customProgramCacheKey = () => `terrain:${options.cacheKey ?? ''}`;
   return material;
 }

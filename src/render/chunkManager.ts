@@ -159,6 +159,7 @@ export class ChunkManager {
     // 0..255 に詰めてある。normalized で 0..1 として材質に渡る。
     geo.setAttribute('rock', new THREE.BufferAttribute(data.rock, 3, true));
     geo.setAttribute('surf', new THREE.BufferAttribute(data.surf, 3, true));
+    geo.setIndex(new THREE.BufferAttribute(data.index, 1));
     geo.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(geo, this.material);
